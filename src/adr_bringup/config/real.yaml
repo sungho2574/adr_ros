@@ -23,6 +23,15 @@ perception:
   calib_file: calib_1640x1232_v2.yaml
   record: false
 
+betaflight:
+  port: /dev/ttyTHS1
+  baud: 500000
+  imu_hz: 100.0
+  battery_hz: 2.0
+  acc_lsb_per_g: 512.0   # Matches deploy. Confirm against the FC's stationary raw acceleration.
+  response_timeout_s: 0.025
+  frame_id: base_link
+
 viz:
   fps: 30.0
   output_width: 640

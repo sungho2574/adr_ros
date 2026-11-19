@@ -12,5 +12,6 @@
   <exec_depend>adr_viz</exec_depend><exec_depend>adr_logging</exec_depend>
   <exec_depend>adr_streaming</exec_depend>
   <exec_depend>adr_control</exec_depend>
+  <exec_depend>adr_betaflight</exec_depend>
   <export><build_type>ament_cmake</build_type></export>
 </package>

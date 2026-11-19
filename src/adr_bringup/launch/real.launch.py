@@ -1,4 +1,4 @@
-"""Real vehicle vision, HUD streaming and recording."""
+"""Real vehicle vision, Betaflight telemetry, HUD streaming and recording."""
 import os
 from pathlib import Path
 from shutil import which
@@ -45,6 +45,10 @@ def setup(context):
     config_yaml = config_path.read_text(encoding='utf-8')
     config = yaml.safe_load(config_yaml)
     nodes = vision_nodes(config)
+    telemetry = []
+    if LaunchConfiguration('msp').perform(context) == 'true' and 'betaflight' in config:
+        telemetry = [Node(package='adr_betaflight', executable='msp_telemetry', output='screen',
+                          parameters=[config['betaflight']])]
     stream_url = LaunchConfiguration('stream_url').perform(context).strip()
     bundle = LaunchConfiguration('policy_bundle').perform(context).strip()
     policy = []
@@ -58,7 +62,7 @@ def setup(context):
         on_exit=[EmitEvent(event=Shutdown(reason='A required process exited'))],
     )) for node in nodes]
     return [SetEnvironmentVariable('ROS_DOMAIN_ID', str(config.get('ros_domain_id', 0))),
-            *handlers, *nodes, *policy, recorder('real', config_yaml=config_yaml),
+            *handlers, *nodes, *telemetry, *policy, recorder('real', config_yaml=config_yaml),
             *streaming_actions(stream_url)]
 
 
@@ -70,6 +74,8 @@ def generate_launch_description():
         DeclareLaunchArgument('stream_url', default_value='local',
                               description='local starts MediaMTX, an RTSP URL uses an existing server, '
                                           'and an empty value disables streaming'),
+        DeclareLaunchArgument('msp', default_value='true', choices=['true', 'false'],
+                              description='Read Betaflight telemetry using the UART configured in real.yaml'),
         DeclareLaunchArgument('policy_bundle', default_value='',
                               description='Deploy bundle directory to enable policy inference'),
         DeclareLaunchArgument('policy_bench_imu', default_value='false', choices=['true', 'false'],

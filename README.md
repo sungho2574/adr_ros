@@ -28,6 +28,25 @@ ros2 launch adr_bringup real.launch.py
 
 기본 파라미터는 [real.yaml](src/adr_bringup/config/real.yaml)에 있다. `config:=/path/to/real.yaml`로 덮어쓸 수 있다. IMX219은 mode 3, 1640×1232, 30 fps다. 카메라 노드에서 320×240 BGR로 하드웨어 축소한 다음 발행한다. 노출 4 ms와 아날로그/ISP 게인 1은 GateNet 인계 설정을 따른다.
 
+## Betaflight UART 텔레메트리
+
+`adr_betaflight`가 UART와 MSP 프로토콜을 담당한다. `adr_control`은 ROS IMU를 구독하고, `adr_viz`는 ROS 배터리를 구독한다. 실기체 런치는 `real.yaml`의 `betaflight` 설정으로 노드를 시작한다. 카메라만 점검할 때는 `camera_test.launch.py` 또는 `real.launch.py msp:=false`를 쓰면 된다.
+
+Jetson UART는 **`/dev/ttyTHS1`, 500000 baud, 8N1**이다. FC에서 실제 연결한 하드웨어 UART의 MSP를 켜고 500000 baud를 맞춘다. 두 장치의 UART 레벨을 확인한 뒤 TX↔RX와 공통 GND를 연결한다. [Betaflight Ports 설정](https://betaflight.com/docs/wiki/app/ports-tab) · [Betaflight baud 목록](https://github.com/betaflight/betaflight/blob/4.5.2/src/main/io/serial.c#L108-L110)
+
+텔레메트리만 단독으로 실행할 수 있다. Jetson의 시스템 Python에 `python3-serial`이 필요하다.
+
+```bash
+ros2 run adr_betaflight msp_telemetry --ros-args \
+  -p port:=/dev/ttyTHS1 -p baud:=500000 -p acc_lsb_per_g:=512.0
+ros2 topic hz /adr/telemetry/imu
+ros2 topic echo /adr/telemetry/battery --qos-reliability best_effort
+```
+
+IMU와 자세는 하나의 MSP 요청으로 묶어 **100 Hz**를 목표로 발행한다. 배터리 조회는 **2 Hz**를 목표로 같은 요청에 추가한다. 토픽 타임스탬프는 Jetson의 응답 수신 시각이다. 첫 가속도 raw 샘플을 노드 로그에 남긴다. 기체가 수평 정지 상태일 때 `Z ≈ +512 LSB`와 ROS의 `Z ≈ +9.81 m/s²`를 확인한다. yaw는 FC 헤딩에서 변환하므로 절대 방위 기준의 정확도는 FC 설정에 달려 있다. [Betaflight MSP 응답 형식](https://github.com/betaflight/betaflight/blob/4.5.2/src/main/msp/msp.c#L2191-L2224)
+
+배터리 잔량은 FC에 용량과 전류계가 설정돼 있으면 사용량으로 추정하고, 그 외에는 FC의 셀 전압 범위로 추정한다. 계산에 필요한 설정이 없으면 미측정으로 표시한다. [Betaflight 배터리 잔량 계산](https://github.com/betaflight/betaflight/blob/2025.12.1/src/main/sensors/battery.c#L457-L469)
+
 ## 토픽
 
 | 토픽 | 내용 |
@@ -38,6 +57,8 @@ ros2 launch adr_bringup real.launch.py
 | `/adr/perception/mask_full` | 왜곡 보정 좌표계의 320×240 `mono8` 마스크 |
 | `/adr/perception/image_rect` | 마스크와 픽셀 좌표가 같은 320×240 보정 영상 |
 | `/adr/perception/latency_ms` | 카메라 타임스탬프에서 마스크 발행 직전까지 걸린 시간 |
+| `/adr/telemetry/imu` | Betaflight 각속도·가속도·자세를 담은 `sensor_msgs/Imu` |
+| `/adr/telemetry/battery` | 전압, 전류와 추정 잔량을 담은 `sensor_msgs/BatteryState` |
 | `/adr/monitor/image`, `/adr/monitor/image/compressed` | GateNet 마스크와 하단 배터리 전압·잔량을 표시한 640×480 HUD |
 | `/adr/monitor/status` | 배터리 값과 수신 상태 |
 
@@ -68,6 +89,6 @@ ros2 topic echo /adr/control/status --qos-reliability best_effort
 
 입출력은 best effort, depth 1이다. 카메라와 IMU의 타임스탬프는 노드와 같은 ROS 시계를 사용한다. 기본 입력 유효기간은 마스크 150 ms, IMU 50 ms다. 두 값은 단독 노드에서 `mask_timeout_s`, `imu_timeout_s` 파라미터로 설정한다. 입력이 만료되면 액션 발행을 멈추고 정책 메모리와 게이트 인덱스를 초기화한다. 벤치 모드는 새 입력으로 추론을 재개한다. 실측 IMU 모드에서 실행 중 입력이 만료되면 노드 재시작을 요구한다.
 
-Betaflight 연동은 Jetson UART부터 진행한다. 실기체에서 입력이 끊기면 조종자에게 제어권을 돌려주고 지상에서만 정책을 다시 시작한다. 실제 제어권 복귀 및 지상 확인은 UART와 RC 제어를 연결할 때 적용한다.
+Betaflight UART는 MSP 조회 전용이다. 이후 RC 제어 연동 단계에서 입력이 끊기면 조종자에게 제어권을 돌려주고 지상에서만 정책을 다시 시작하는 조건을 적용한다.
 
 복사해 온 ArUco, 정밀착륙 컨트롤러, SITL/HITL 전용 파일은 `legacy/precision_landing/`에 참고용으로 보관한다.
