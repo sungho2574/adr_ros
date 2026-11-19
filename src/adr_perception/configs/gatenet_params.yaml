@@ -1,0 +1,14 @@
+gatenet_node:
+  ros__parameters:
+    image_topic: /adr/camera/image_raw
+    engine_file: gatenet_240x320_fp16.plan
+    onnx_file: gatenet_240x320.onnx
+    remap_file: remap_320x240.npz
+    gatenet_K_file: gatenet_K.yaml
+    calib_file: calib_1640x1232_v2.yaml
+    publish_mask_full: false
+    publish_rectified: false
+
+    # Optional 320x240 input JPEGs and 64x64 masks, independent of rosbag.
+    record: false
+    record_dir: ~/adr_gatenet_records

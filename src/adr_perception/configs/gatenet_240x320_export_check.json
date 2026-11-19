@@ -1,0 +1,14 @@
+{
+ "onnx": "runs/u320/gatenet_240x320.onnx",
+ "bytes": 3318772,
+ "opset": 13,
+ "inputs_checked": 18,
+ "random": 8,
+ "samples": 10,
+ "max_abs_logit_diff": 1.9341707229614258e-05,
+ "max_abs_prob_diff": 4.649162292480469e-06,
+ "flipped_pixels_at_0.5": 0,
+ "total_pixels": 1382400,
+ "epoch": 47,
+ "val_iou_lab": 0.928929328918457
+}

@@ -1,0 +1,21 @@
+# ROS build outputs and local session data
+/build/
+/install/
+/log/
+/flight_logs/
+/.deps/
+/.run/
+/scripts/camera_calibration/samples/
+
+# Machine-specific editor settings and caches
+.vscode/
+.DS_Store
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+# TensorRT engines are built on the target Jetson
+*.plan
+*.engine

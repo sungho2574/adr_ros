@@ -1,0 +1,43 @@
+# GateNet 입력 카메라 — 이 파일 한 곳에서만 읽습니다 (gnet/camera320.py).
+#
+# 실비행 경로:
+#   1640x1232 (IMX219 센서 모드, 2x2 비닝, 전체 화각)
+#     -> 320x240  (하드웨어 nvvidconv / 파일 입력이면 cv2 INTER_AREA)
+#     -> cv2.remap 으로 왜곡 보정 + 아래 target_K 핀홀로 재투영   (240x320 = GateNet 입력)
+#     -> GateNet -> sigmoid 0.5
+#     -> 64x64 (INTER_AREA -> 0.5)  -- 4:3 을 위아래 공백 없이 정사각으로 늘림
+#
+# 렌더러 화각은 캘리 반영 63.2 x 49.6 deg, 실제 렌즈(320x240 원본) 는 64.3 x 50.3 deg.
+# target_K 로 왜곡 보정하면서 가장자리를 잘라 맞추는 구조이므로 target_K 에 실제 렌즈
+# 값을 쓰면 안 됩니다.
+
+calibration_file: calib_1640x1232_v2.yaml     # 이 폴더 기준 상대 경로
+calibration_size: [1640, 1232]                # [W, H]
+
+# 1) 왜곡 보정 목표 K (OpenCV newCameraMatrix, 픽셀 중심 = 정수 좌표 규약)
+#    보성 ctba.camera.gatenet_K_opencv() 와 같은 값.
+#    시뮬 코드(픽셀 중심 +0.5 규약)에는 cx 160 / cy 120 으로 적혀 있음 = 같은 카메라.
+target_K:
+  size: [320, 240]          # [W, H]
+  fx: 260.076
+  fy: 259.704
+  cx: 159.5
+  cy: 119.5
+
+# 2) 320x240 으로 줄인 원본 프레임의 K (cameraMatrix). 코드가 캘리 yaml 에서
+#    반 픽셀 규약으로 다시 계산하고 아래 값과 1e-3 안에서 일치하는지 검사합니다.
+#    (보성 calibration_at(cal, 320, 240) 과 같은 값). 왜곡 계수는 캘리 yaml 그대로.
+source_K_320x240_expected:
+  fx: 248.454
+  fy: 249.148
+  cx: 157.979
+  cy: 120.835
+
+# 3) 정책 입력 64x64 (target_K 를 가로 64/320, 세로 64/240 로 줄인 값)
+#    시뮬(+0.5 규약) cx = cy = 32  ==  OpenCV 31.5
+policy_K_64_expected:
+  size: [64, 64]
+  fx: 52.015
+  fy: 69.254
+  cx_sim: 32.0
+  cy_sim: 32.0

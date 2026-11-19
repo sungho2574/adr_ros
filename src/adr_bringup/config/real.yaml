@@ -1,0 +1,32 @@
+ros_domain_id: 0
+
+camera:
+  sensor_id: 0
+  sensor_mode: 3
+  width: 1640
+  height: 1232
+  fps: 30.0
+  output_width: 320
+  output_height: 240
+  interpolation_method: 1
+  # Fixed 4 ms exposure and gain match the GateNet handoff defaults.
+  exposure_time_range: "4000000 4000000"
+  gain_range: "1 1"
+  isp_digital_gain_range: "1 1"
+  ae_lock: true
+
+perception:
+  engine_file: gatenet_240x320_fp16.plan
+  onnx_file: gatenet_240x320.onnx
+  remap_file: remap_320x240.npz
+  gatenet_K_file: gatenet_K.yaml
+  calib_file: calib_1640x1232_v2.yaml
+  record: false
+
+viz:
+  fps: 30.0
+  output_width: 640
+  jpeg_quality: 70
+  stale_after: 2.0
+  battery_source: ros   # ros: sensor_msgs/BatteryState; px4: px4_msgs/BatteryStatus
+  battery_topic: ""    # Empty selects the topic for battery_source.
