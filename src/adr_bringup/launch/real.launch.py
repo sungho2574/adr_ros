@@ -1,43 +1,19 @@
 """Real vehicle vision, Betaflight telemetry, HUD streaming and recording."""
-import os
 from pathlib import Path
-from shutil import which
+
 import yaml
-from ament_index_python.packages import PackageNotFoundError, get_package_share_directory
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, OpaqueFunction, RegisterEventHandler,
-                            EmitEvent, SetEnvironmentVariable, ExecuteProcess, LogInfo)
+                            EmitEvent, SetEnvironmentVariable)
 from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
-from launch.logging import launch_config
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from adr_bringup.recording import recorder, recording_arguments
 from adr_bringup.real_vision import vision_nodes
-
-
-def streaming_actions(stream_url):
-    if not stream_url:
-        return []
-    actions = []
-    if stream_url == 'local':
-        try:
-            config = Path(get_package_share_directory('adr_streaming')) / 'mediamtx.yml'
-        except PackageNotFoundError:
-            return [LogInfo(msg='HUD streaming disabled: build the adr_streaming package.')]
-        binary = which('mediamtx')
-        if binary is None and os.environ.get('ADR_ROOT'):
-            binary = which(str(Path(os.environ['ADR_ROOT']) / '.deps/hud/mediamtx'))
-        if binary is None or not config.is_file():
-            return [LogInfo(msg='HUD streaming disabled: MediaMTX executable or configuration is missing.')]
-        actions.append(ExecuteProcess(
-            cmd=[binary, str(config)], cwd=launch_config.log_dir, name='mediamtx', output='screen'))
-        stream_url = 'rtsp://127.0.0.1:8554/hud'
-    actions.append(Node(
-        package='adr_streaming', executable='hud_streamer', output='screen',
-        parameters=[{'url': stream_url}]))
-    return actions
+from adr_bringup.streaming import streaming_actions
 
 
 def setup(context):

@@ -28,6 +28,14 @@ ros2 launch adr_bringup real.launch.py
 
 기본 파라미터는 [real.yaml](src/adr_bringup/config/real.yaml)에 있다. `config:=/path/to/real.yaml`로 덮어쓸 수 있다. IMX219은 mode 3, 1640×1232, 30 fps다. 카메라 노드에서 320×240 BGR로 하드웨어 축소한 다음 발행한다. 노출 4 ms와 아날로그/ISP 게인 1은 GateNet 인계 설정을 따른다.
 
+## 영상 송출 스모크 테스트
+
+```bash
+ros2 launch adr_bringup smoke_test.launch.py
+```
+
+실기체 설정으로 카메라, GateNet, HUD, 스트리머를 띄운다. 로컬 MediaMTX가 필요하며, 다른 기기에서 `http://JETSON_IP:8889/hud` 또는 `rtsp://JETSON_IP:8554/hud`로 확인할 수 있다. 기존 RTSP 서버를 쓰려면 `stream_url:=rtsp://HOST:8554/hud`를 지정한다.
+
 ## Betaflight UART 텔레메트리
 
 `adr_betaflight`가 UART와 MSP 프로토콜을 담당한다. `adr_control`은 ROS IMU를 구독하고, `adr_viz`는 ROS 배터리를 구독한다. 실기체 런치는 `real.yaml`의 `betaflight` 설정으로 노드를 시작한다. 카메라만 점검할 때는 `camera_test.launch.py` 또는 `real.launch.py msp:=false`를 쓰면 된다.
