@@ -34,7 +34,9 @@ ros2 launch adr_bringup real.launch.py
 ros2 launch adr_bringup smoke_test.launch.py
 ```
 
-실기체 설정으로 카메라, GateNet, HUD, 스트리머를 띄운다. 로컬 MediaMTX가 필요하며, 다른 기기에서 `http://JETSON_IP:8889/hud` 또는 `rtsp://JETSON_IP:8554/hud`로 확인할 수 있다. 기존 RTSP 서버를 쓰려면 `stream_url:=rtsp://HOST:8554/hud`를 지정한다.
+실기체 설정으로 카메라, GateNet, HUD, 스트리머를 띄우고 rosbag을 기록한다. 녹화는 `record:=false`로 끄거나 `log_dir:=...`로 저장 경로를 바꿀 수 있다. Flight Analyzer 목록에는 스모크 기록이 `SMOKE`로 표시된다.
+
+기본 송출은 로컬 MediaMTX를 사용한다. 다른 기기에서 `http://JETSON_IP:8889/hud` 또는 `rtsp://JETSON_IP:8554/hud`로 확인할 수 있다. 기존 RTSP 서버를 쓰려면 `stream_url:=rtsp://HOST:8554/hud`를 지정한다.
 
 ## Betaflight UART 텔레메트리
 

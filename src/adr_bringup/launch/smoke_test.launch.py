@@ -11,6 +11,7 @@ from launch.events import Shutdown
 from launch.substitutions import LaunchConfiguration
 
 from adr_bringup.real_vision import vision_nodes
+from adr_bringup.recording import recorder, recording_arguments
 from adr_bringup.streaming import streaming_actions
 
 
@@ -28,12 +29,16 @@ def setup(context):
         for process in processes
     ]
     domain = str(config.get('ros_domain_id', 0))
-    return [SetEnvironmentVariable('ROS_DOMAIN_ID', domain), *handlers, *processes]
+    return [
+        SetEnvironmentVariable('ROS_DOMAIN_ID', domain), *handlers, *processes,
+        recorder('smoke', config_yaml=yaml.safe_dump(config, sort_keys=False), trigger='launch'),
+    ]
 
 
 def generate_launch_description():
     config = Path(get_package_share_directory('adr_bringup')) / 'config/real.yaml'
     return LaunchDescription([
+        *recording_arguments(arm_trigger=False),
         DeclareLaunchArgument('config', default_value=str(config)),
         DeclareLaunchArgument('stream_url', default_value='local',
                               description='local starts MediaMTX, or supply an RTSP publish URL'),

@@ -1,6 +1,6 @@
-# Precision Landing Flight Analyzer
+# ADR Flight Analyzer
 
-ARMS의 `SW/scripts/flight_analyzer`를 기반으로 한 ROS 2 착륙 로그 뷰어다.
+ROS 2 rosbag의 HUD 영상과 텔레메트리를 같은 시간축에서 다시 보는 도구다. 기존 정밀착륙 기록도 열 수 있다.
 
 ## 녹화
 
@@ -8,29 +8,30 @@ ROS Humble 환경에서 rosbag CLI와 SQLite 플러그인을 설치하고 프로
 
 ```bash
 sudo apt install ros-humble-ros2bag ros-humble-rosbag2-storage-default-plugins
-./scripts/build.sh real
-./scripts/run_real.sh
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install
+source install/setup.bash
+ros2 launch adr_bringup real.launch.py
 ```
 
-실기체 런치는 시작부터 종료까지 bag을 기록한다. `record:=false`로 끄거나, PX4 사용 시 `record_trigger:=px4_arm`으로 ARM에서 시작하고 DISARM에서 마감할 수 있다.
+실기체 런치와 `smoke_test.launch.py`는 기본으로 시작부터 종료까지 bag을 기록한다. `record:=false`로 끌 수 있다. PX4 실기체 런치는 `record_trigger:=px4_arm`으로 ARM에서 시작하고 DISARM에서 마감할 수 있다.
 
-기본 저장 경로는 `flight_logs/<날짜_시각>_<세션>_<프로필>/bag/`이다. `log_dir:=/path/to/flight_logs`로 변경하거나 `ros2 run adr_logging flight_recorder`로 별도 실행할 수 있다.
+기본 저장 경로는 `flight_logs/<날짜_시각>_<세션>_<프로필>/bag/`이다. `log_dir:=/path/to/flight_logs`로 변경할 수 있다. 세션의 `manifest.json`에 런치 프로필과 녹화 시작 시각을 저장한다. 기록 목록은 프로필에 따라 `REAL` 또는 `SMOKE` 태그를 표시한다. 이전 녹화는 세션 폴더 이름에서 프로필을 확인한다.
 
-GateNet 64×64 마스크와 지연, CameraInfo, HUD 상태, 배터리, 압축 HUD 영상을 기록한다. 영상 토픽은 `/adr/monitor/image/compressed`다.
+기록에 들어 있는 GateNet 지연·발행률, FC 연결·ARM·MSP OVERRIDE, IMU 자세·각속도·가속도, 배터리 전압·잔량·전류, 정책 액션·추론 시간을 기본 그래프로 표시한다. HUD 영상은 `/adr/monitor/image/compressed`에서 읽는다.
 
 ## 다시 보기
 
-Jetson의 기록 디렉터리를 통째로 노트북의 `flight_logs/`에 복사할 수 있다. 뷰어 실행에는 ROS가 필요 없다.
-기존 정밀착륙 bag도 재생할 수 있다.
+Jetson에서 기본 `flight_logs/`를 직접 읽거나, 완료된 기록 디렉터리를 통째로 맥의 `flight_logs/`에 복사해 열 수 있다. 뷰어 실행에는 ROS가 필요 없다. 아래 명령은 저장소 루트에서 실행한다.
 
 ```bash
-python3 -m venv /tmp/pl-viewer
-source /tmp/pl-viewer/bin/activate
+python3 -m venv scripts/flight_analyzer/.venv
+source scripts/flight_analyzer/.venv/bin/activate
 python -m pip install -r scripts/flight_analyzer/requirements.txt
-python scripts/flight_analyzer/app.py
+python scripts/flight_analyzer/app.py --log-dir flight_logs
 ```
 
-브라우저에서 <http://127.0.0.1:5050/>을 열면 최신 기록을 불러온다. 영상 재생, 시간 탐색, 그래프 커서 따라가기와 토픽 필드 패널 추가를 지원한다. 그래프 라이브러리 uPlot은 브라우저에서 CDN으로 불러온다.
+같은 기기의 브라우저에서 <http://127.0.0.1:5050/>을 열면 최신 기록을 불러온다. 새로 복사한 기록은 **최신 기록 열기** 버튼으로 선택할 수 있다. Jetson에서 뷰어를 실행하고 맥에서 보려면 맥에서 `ssh -N -L 5050:127.0.0.1:5050 JETSON_USER@JETSON_IP`로 포워딩한 뒤 같은 주소를 연다. 그래프 라이브러리 uPlot은 브라우저에서 CDN으로 불러온다.
 
 별도 로그 폴더나 단일 bag 디렉터리는 `--log-dir`로 열 수 있다. PX4 메시지 필드를 볼 때는 기록과 같은 `px4_msgs` 서브모듈을 초기화하거나 `--px4-msg-dir /path/to/px4_msgs/msg`를 지정한다. HUD와 모니터 상태 그래프는 표준 ROS 메시지를 사용한다.
 

@@ -4,6 +4,11 @@
 const T = "/pl/control/status";
 const D = "/pl/detection/status";
 const M = "/adr/monitor/status";
+const FC = "/adr/telemetry/fc_status";
+const IMU = "/adr/telemetry/imu";
+const BATTERY = "/adr/telemetry/battery";
+const CONTROL = "/adr/control/status";
+const ACTION = "/adr/control/action";
 const OUTPUT_RATES = "viewer/output_rates";
 const LEGACY_TOPICS = new Map([
   ["/camera/camera_info", "/adr/camera/camera_info"],
@@ -22,32 +27,66 @@ function panel(title, topic, fields, note) {
 
 const PALETTE = ["#60a5fa", "#f87171", "#4ade80", "#fbbf24", "#c084fc", "#22d3ee", "#f472b6", "#a3e635"];
 
-const PANELS = [
-  panel("Output rates", OUTPUT_RATES,
-    [["camera", "Camera"], ["perception", "GateNet"], ["detection", "ArUco"],
-      ["control", "Control"], ["viz", "Viz"]], "Hz in 1 s bins"),
-  panel("GateNet latency", "/adr/perception/latency_ms", [["data", "Camera to inference"]], "[ms]"),
-  panel("Landing state", T, [["active", "Mode active"], ["target_lost", "Target lost"]], "0 / 1"),
-  panel("ArUco detection", D, [["detected", "Marker detected"], ["pose_valid", "Pose valid"]], "0 / 1"),
-  {
-    title: "Marker relative to drone",
-    note: "Body FRD [m] · dashed = KF sample logged by the controller",
-    spanGaps: false,
-    series: ["Forward", "Right", "Down"].flatMap((axis, i) => [
-      { t: M, f: `detection_value_body_position_m_${i}`, label: `ArUco ${axis}`, color: PALETTE[i] },
-      { t: T, f: `kf_target_frd_m_${i}`, label: `KF ${axis}`, color: PALETTE[i], dash: [5, 4] },
-    ]),
-  },
-  panel("Estimated target position", "/pl/target_pose_world",
-    [["pose_position_x", "North"], ["pose_position_y", "East"], ["pose_position_z", "Down"]], "Local NED [m]"),
-  panel("Ground and vertical speed", M,
-    [["velocity_value_horizontal_m_s", "Horizontal"], ["velocity_value_vertical_m_s", "Down"]], "[m/s]"),
-  panel("GPS", M, [["gps_value_fix_type", "Fix type"], ["gps_value_satellites", "Satellites"]]),
-  panel("Battery voltage", M, [["battery_value_voltage_v", "Voltage"]], "[V]"),
-  panel("Battery remaining", M, [["battery_value_remaining_pct", "Remaining"]], "[%]"),
-];
+function standardPanels() {
+  const hasColumn = (topic, field) => fieldCol(topic, field)?.some(Number.isFinite);
+  const attitude = hasColumn(IMU, "roll_deg") ? IMU : M;
+  const anglePrefix = attitude === IMU ? "" : "flight_attitude_";
+  const voltage = hasColumn(BATTERY, "voltage") ? BATTERY : M;
+  const remaining = hasColumn(BATTERY, "remaining_pct") ? BATTERY : M;
+  return [
+    panel("Output rates", OUTPUT_RATES,
+      [["camera", "Camera"], ["perception", "GateNet"], ["detection", "ArUco"],
+        ["imu", "IMU"], ["policy", "Policy"], ["control", "Control"], ["viz", "Viz"]], "Hz in 1 s bins"),
+    panel("GateNet latency", "/adr/perception/latency_ms", [["data", "Camera to inference"]], "[ms]"),
+    {
+      title: "FC status",
+      flags: true,
+      series: [["connected", "Connected"], ["armed", "ARM"], ["msp_override", "MSP Override"]]
+        .map(([f, label], i) => ({ t: FC, f, label, add: i, step: true })),
+    },
+    panel("Attitude", attitude, [["roll_deg", "Roll"], ["pitch_deg", "Pitch"], ["yaw_deg", "Yaw"]]
+      .map(([field, label]) => [anglePrefix + field, label]), "[deg] · Betaflight heading"),
+    panel("Angular velocity", IMU,
+      [["angular_velocity_x", "X"], ["angular_velocity_y", "Y"], ["angular_velocity_z", "Z"]], "Body FLU [rad/s]"),
+    panel("Acceleration", IMU,
+      [["linear_acceleration_x", "X"], ["linear_acceleration_y", "Y"], ["linear_acceleration_z", "Z"]], "Body FLU [m/s²]"),
+    panel("Battery voltage", voltage,
+      [[voltage === BATTERY ? "voltage" : "battery_value_voltage_v", "Voltage"]], "[V]"),
+    panel("Battery remaining", remaining,
+      [[remaining === BATTERY ? "remaining_pct" : "battery_value_remaining_pct", "Remaining"]], "[%]"),
+    panel("Battery current", BATTERY, [["current", "Current"]], "[A] · negative while discharging"),
+    panel("Policy action", ACTION,
+      [["data_0", "Throttle"], ["data_1", "Roll"], ["data_2", "Pitch"], ["data_3", "Yaw rate"]], "Normalized"),
+    panel("Policy rate", CONTROL, [["step_hz", "Measured"]], "[Hz]"),
+    panel("Policy timing", CONTROL,
+      [["step_ms", "Inference"], ["mask_age_ms", "Mask age"], ["imu_age_ms", "IMU age"]], "[ms]"),
+    panel("Policy gate index", CONTROL, [["gate_index", "Current gate"], ["next_gate_index", "Next gate"]], "Zero-based"),
+    panel("Policy gate position", CONTROL,
+      [["gate_position_m_0", "X"], ["gate_position_m_1", "Y"], ["gate_position_m_2", "Z"]], "Gate frame [m]"),
+    panel("Landing state", T, [["active", "Mode active"], ["target_lost", "Target lost"]], "0 / 1"),
+    panel("ArUco detection", D, [["detected", "Marker detected"], ["pose_valid", "Pose valid"]], "0 / 1"),
+    {
+      title: "Marker relative to drone",
+      note: "Body FRD [m] · dashed = KF sample logged by the controller",
+      spanGaps: false,
+      series: ["Forward", "Right", "Down"].flatMap((axis, i) => [
+        { t: M, f: `detection_value_body_position_m_${i}`, label: `ArUco ${axis}`, color: PALETTE[i] },
+        { t: T, f: `kf_target_frd_m_${i}`, label: `KF ${axis}`, color: PALETTE[i], dash: [5, 4] },
+      ]),
+    },
+    panel("Estimated target position", "/pl/target_pose_world",
+      [["pose_position_x", "North"], ["pose_position_y", "East"], ["pose_position_z", "Down"]], "Local NED [m]"),
+    panel("Ground and vertical speed", M,
+      [["velocity_value_horizontal_m_s", "Horizontal"], ["velocity_value_vertical_m_s", "Down"]], "[m/s]"),
+    panel("GPS", M, [["gps_value_fix_type", "Fix type"], ["gps_value_satellites", "Satellites"]]),
+  ];
+}
 
 const STATE_COLORS = {
+  DISARMED: "rgba(160,160,160,0.14)",
+  ARMED: "rgba(255,165,0,0.18)",
+  AUTO: "rgba(0,220,0,0.18)",
+  "NO STATUS": "rgba(255,0,0,0.18)",
   IDLE: "rgba(148,163,184,0.14)",
   SEARCH: "rgba(148,163,184,0.10)",
   ALIGN: "rgba(255,165,0,0.18)",
@@ -57,6 +96,7 @@ const STATE_COLORS = {
   ABORTED: "rgba(255,0,0,0.18)",
   INACTIVE: "rgba(148,163,184,0.07)",
 };
+const stateLabel = (state) => ({ ARMED: "ARM", DISARMED: "DISARM" })[state] ?? state;
 const CHART_H = 210;
 
 // ---------------------------------------------------------------- 상태
@@ -126,12 +166,12 @@ function fmtVal(v) {
 function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
 
 // ---------------------------------------------------------------- 기록 목록
-async function loadRecords() {
+async function loadRecords(latest = false) {
   const j = await api("/api/records");
   records = j.records;
   renderRecords();
   const want = decodeURIComponent(location.hash.slice(1));
-  const preferred = records.find((r) => r.id === want) || records[0];
+  const preferred = (latest ? null : records.find((r) => r.id === want)) || records[0];
   if (preferred) await openRecord(preferred.id);
 }
 function renderRecords() {
@@ -157,6 +197,13 @@ function renderRecords() {
     const name = li.children[0];
     name.append(document.createTextNode(r.name));
     const sub = li.children[1];
+    if (r.profile === "real" || r.profile === "smoke") {
+      const tag = document.createElement("span");
+      tag.className = "record-tag";
+      tag.dataset.profile = r.profile;
+      tag.textContent = r.profile.toUpperCase();
+      sub.appendChild(tag);
+    }
     const parts = [
       r.start ? r.start.replace("T", " ").slice(5, 16) : null,
       r.duration != null ? fmtDur(r.duration) : null,
@@ -202,8 +249,10 @@ async function openRecord(id) {
   }
   setContentLoading(false);
   const topics = Object.keys(rec.topics);
+  const samples = (rec.topics[ACTION] ?? rec.topics[CONTROL] ?? rec.topics[T])?.t.length;
   $("rec-meta").textContent =
-    `${fmtDur(rec.duration)} · 토픽 ${topics.length}개 · control samples ${rec.topics[T]?.t.length ?? 0}개`;
+    [fmtDur(rec.duration), `토픽 ${topics.length}개`, samples == null ? null : `제어 샘플 ${samples}개`]
+    .filter(Boolean).join(" · ");
   $("errors").innerHTML = "";
   for (const e of rec.errors || []) {
     const d = document.createElement("div");
@@ -220,13 +269,15 @@ async function openRecord(id) {
 }
 
 function buildStateSegs() {
-  const src = rec.topics[T];
-  const st = src?.strings?.state;
+  const hud = rec.topics[M];
+  const flight = hud?.strings?.flight_mode ? hud : rec.topics[FC];
+  const src = flight ?? rec.topics[T];
+  const st = flight ? (flight.strings.flight_mode ?? flight.strings.mode) : src?.strings?.state;
   if (!st) return [];
   const segs = [];
   let cur = null;
   for (let i = 0; i < st.length; i++) {
-    const state = src.fields.active?.[i] ? st[i] : "INACTIVE";
+    const state = flight ? (st[i] || "NO STATUS") : (src.fields.active?.[i] ? st[i] : "INACTIVE");
     if (!cur || cur.state !== state) {
       if (cur) cur.t1 = src.t[i];
       cur = { state, t0: src.t[i], t1: src.t[i] };
@@ -242,7 +293,7 @@ function stateAt(t) {
     const m = (lo + hi) >> 1;
     if (stateSegs[m].t0 <= t) { ans = stateSegs[m]; lo = m + 1; } else hi = m - 1;
   }
-  return ans?.state ?? "";
+  return ans && t <= ans.t1 ? ans.state : "";
 }
 
 function renderStateLegend() {
@@ -253,7 +304,7 @@ function renderStateLegend() {
   for (const [k, c] of Object.entries(STATE_COLORS)) {
     if (!present.has(k)) continue;
     const s = document.createElement("span");
-    s.innerHTML = `<i style="background:${c.replace(/[\d.]+\)$/, "0.55)")}"></i>${k}`;
+    s.innerHTML = `<i style="background:${c.replace(/[\d.]+\)$/, "0.55)")}"></i>${stateLabel(k)}`;
     el.appendChild(s);
   }
 }
@@ -282,7 +333,7 @@ function renderPanels() {
   $("empty").hidden = true;
   const container = $("control-panels");
   container.replaceChildren();
-  for (const p of [...PANELS, ...customPanels.map((p, i) => ({ ...p, custom: i }))]) {
+  for (const p of [...standardPanels(), ...customPanels.map((p, i) => ({ ...p, custom: i }))]) {
     if (p.series.some((s) => fieldCol(s.t || T, s.f))) container.appendChild(makePanel(p));
   }
 }
@@ -530,7 +581,7 @@ function addCustom() {
   for (const part of raw.split(",")) {
     const bits = part.trim().split(/\s+/);
     if (!bits[0]) continue;
-    const [tp, f] = bits.length >= 2 ? bits : [T, bits[0]];
+    const [tp, f] = bits.length >= 2 ? bits : [rec.topics[CONTROL] ? CONTROL : T, bits[0]];
     if (!fieldCol(tp, f)) {
       alert(`필드 없음: ${tp} ${f}`);
       return;
@@ -559,6 +610,11 @@ async function updateScene() {
     status.textContent = "기록을 선택하세요.";
     return;
   }
+  const hasPosition = Object.keys(record.topics).some((topic) =>
+    /^\/fmu\/out\/vehicle_local_position(?:_v\d+)?$/.test(topic) ||
+    topic === "/pl/target_pose_world" || topic === "/pl/sim/marker_pose");
+  $("scene-pane").hidden = !hasPosition;
+  if (!hasPosition) return;
   if (!scene) status.textContent = "3D 화면을 여는 중…";
   try {
     scenePromise ??= import("./scene.mjs").then(({ LandingScene }) =>
@@ -663,7 +719,7 @@ function updateVideoInfo(t) {
   if (!hasVideo()) return;
   const st = stateAt(t);
   $("v-info").textContent =
-    `t = ${t.toFixed(2)} s · frame ${V.want < 0 ? "—" : V.want + 1}/${videoData().t.length}${st ? " · " + st : ""}`;
+    `t = ${t.toFixed(2)} s · frame ${V.want < 0 ? "—" : V.want + 1}/${videoData().t.length}${st ? " · " + stateLabel(st) : ""}`;
 }
 
 /* 재생 위치를 모든 그래프의 커서로 표시한다.
@@ -753,6 +809,17 @@ function applySidebar() {
 
 // ---------------------------------------------------------------- 시작
 function bind() {
+  $("btn-latest").onclick = async () => {
+    const button = $("btn-latest");
+    button.disabled = true;
+    try {
+      await loadRecords(true);
+    } catch (error) {
+      $("rec-meta").textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
+  };
   $("btn-sidebar").onclick = () => {
     sidebarCollapsed = !sidebarCollapsed;
     saveLS("pl_analyzer.sidebar_collapsed", sidebarCollapsed);

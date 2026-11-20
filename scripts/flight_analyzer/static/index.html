@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Precision Landing Flight Analyzer</title>
+<title>ADR Flight Analyzer</title>
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css">
 <link rel="stylesheet" href="/static/style.css">
@@ -13,7 +13,8 @@
 <div id="app">
   <aside id="sidebar">
     <div class="side-head">
-      <div class="brand">Precision Landing Flight Analyzer</div>
+      <div class="brand">ADR Flight Analyzer</div>
+      <button id="btn-latest" class="btn small">최신 기록 열기</button>
     </div>
     <ul id="rec-list"></ul>
   </aside>
@@ -80,7 +81,7 @@
         <div id="errors"></div>
         <div id="control-panels"></div>
         <section id="custom-add" hidden>
-          <input id="custom-input" list="field-list" placeholder="필드 추가 → 새 패널 (예: /pl/target_pose pose_position_x)">
+          <input id="custom-input" list="field-list" placeholder="필드 추가 → 새 패널 (예: /adr/telemetry/imu roll_deg)">
           <datalist id="field-list"></datalist>
           <button id="btn-custom" class="btn">패널 추가</button>
         </section>

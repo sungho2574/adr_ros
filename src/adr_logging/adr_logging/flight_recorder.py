@@ -1,6 +1,7 @@
 """Record racing perception, telemetry and the compressed HUD to SQLite."""
 import argparse
 from datetime import datetime
+import json
 import os
 from pathlib import Path
 import signal
@@ -67,12 +68,16 @@ class FlightRecorder(Node):
 
     def start_recording(self):
         try:
-            stamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+            started_at = datetime.now().astimezone()
+            stamp = started_at.strftime('%Y%m%d_%H%M%S_%f')
             record_dir = self.root / f'{stamp}_{self.profile}'
             record_dir.mkdir(mode=0o700)
             self.output = record_dir / 'bag'
+            manifest = {'profile': self.profile, 'started_at': started_at.isoformat()}
+            (record_dir / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n',
+                                                      encoding='utf-8')
             if self.config_yaml is not None:
-                (self.output.parent / 'real.yaml').write_text(self.config_yaml, encoding='utf-8')
+                (record_dir / 'real.yaml').write_text(self.config_yaml, encoding='utf-8')
             self.process = subprocess.Popen(
                 ['ros2', 'bag', 'record', '--storage', 'sqlite3',
                  '--regex', TOPIC_FILTER, '-o', str(self.output)],
@@ -111,7 +116,7 @@ class FlightRecorder(Node):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--log-dir', type=Path, help='Log root (default: checkout/flight_logs)')
-    parser.add_argument('--profile', default='manual', choices=['manual', 'real', 'sim', 'hitl'])
+    parser.add_argument('--profile', default='manual', choices=['manual', 'real', 'smoke', 'sim', 'hitl'])
     parser.add_argument('--trigger', default='launch', choices=['launch', 'px4_arm'])
     args = parser.parse_args()
     try:

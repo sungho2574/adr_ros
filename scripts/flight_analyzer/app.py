@@ -1,6 +1,8 @@
 """Browse racing and precision-landing rosbag recordings."""
 import argparse
+import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -21,6 +23,7 @@ app = Flask(__name__, static_folder="static", static_url_path="/static")
 state = {"root": None}
 _cache = OrderedDict()                 # (경로, mtime, 크기) → 로드 결과. 최근 4개만 유지
 _cache_lock = threading.Lock()
+LEGACY_PROFILE = re.compile(r"\d{8}_\d{6}(?:_\d{6})?_(real|smoke)(?:_.+)?")
 
 
 def _root() -> Path:
@@ -38,6 +41,22 @@ def _record_path(rec_id: str) -> Path:
     if not p.exists():
         abort(404, f"기록 없음: {rec_id}")
     return p
+
+
+def _record_profile(record: Path) -> str | None:
+    # Our recorder stores the manifest beside bag/. Support opening either directory.
+    session = record.parent if record.name == "bag" else record
+    manifest = session / "manifest.json"
+    try:
+        if not manifest.is_symlink():
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+            profile = data.get("profile") if isinstance(data, dict) else None
+            if isinstance(profile, str):
+                return profile if profile in ("real", "smoke") else None
+    except (OSError, ValueError):
+        pass
+    older = LEGACY_PROFILE.fullmatch(session.name)
+    return older.group(1) if older else None
 
 
 def _records(root: Path) -> list:
@@ -63,7 +82,7 @@ def _records(root: Path) -> list:
         return (record / "metadata.yaml").is_file() or (record / "bag").is_dir() or \
             (record / "manifest.json").is_file()
 
-    def metadata_summary(record: Path) -> tuple[str | None, float | None]:
+    def metadata_summary(record: Path) -> tuple[int | None, float | None]:
         """rosbag2의 작은 metadata.yaml에서 시작 시각·길이만 읽는다.
 
         YAML 파서를 추가하지 않고 rosbag2가 고정 형식으로 쓰는 두 nanosecond 필드만
@@ -86,12 +105,12 @@ def _records(root: Path) -> list:
                     start_ns = int(line.split(":", 1)[1].strip())
                 elif section == "duration" and line.startswith("nanoseconds:"):
                     duration_ns = int(line.split(":", 1)[1].strip())
+                if start_ns is not None and duration_ns is not None:
+                    break
         except (OSError, ValueError):
             return None, None
-        start = (datetime.fromtimestamp(start_ns / 1e9).isoformat(timespec="seconds")
-                 if start_ns is not None else None)
         duration = duration_ns / 1e9 if duration_ns is not None else None
-        return start, duration
+        return start_ns, duration
 
     candidates = [root] if looks_like_record(root) else []
     candidates.extend(
@@ -100,17 +119,23 @@ def _records(root: Path) -> list:
         and not d.name.startswith(".") and looks_like_record(d))
     out = []
     for d in candidates:
-        files = db_files(d)
-        start, duration = metadata_summary(d)
-        out.append({
+        stats = [path.stat() for path in db_files(d)]
+        if not stats:
+            continue
+        start_ns, duration = metadata_summary(d)
+        start = (datetime.fromtimestamp(start_ns / 1e9).isoformat(timespec="seconds")
+                 if start_ns is not None else None)
+        newest = start_ns if start_ns is not None else max(stat.st_mtime_ns for stat in stats)
+        out.append((newest, {
             "id": "." if d == root else d.relative_to(root).as_posix(),
             "name": d.name,
-            "size": sum(p.stat().st_size for p in files),
+            "profile": _record_profile(d),
+            "size": sum(stat.st_size for stat in stats),
             "start": start,
             "duration": duration,
-        })
-    out.sort(key=lambda r: r["name"], reverse=True)   # <YYYYmmdd_HHMMSS> → 최신이 위
-    return out
+        }))
+    out.sort(key=lambda item: (item[0], item[1]["name"]), reverse=True)
+    return [record for _, record in out]
 
 
 # ---------------------------------------------------------------- pages
@@ -240,7 +265,8 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=5050)
-    ap.add_argument("--log-dir", type=Path, default=os.environ.get("PL_LOG_DIR", DEFAULT_LOG_ROOT))
+    ap.add_argument("--log-dir", type=Path,
+                    default=os.environ.get("ADR_LOG_DIR") or os.environ.get("PL_LOG_DIR") or DEFAULT_LOG_ROOT)
     ap.add_argument("--px4-msg-dir", type=Path, help="Matching px4_msgs/msg directory")
     args = ap.parse_args()
 
@@ -253,7 +279,7 @@ def main():
     if msg_dir is not None and not msg_dir.is_dir():
         ap.error(f"PX4 message directory not found: {msg_dir}")
     bag_reader.typestore(msg_dir)
-    print(f"Precision Landing Flight Analyzer: http://{args.host}:{args.port}/")
+    print(f"ADR Flight Analyzer: http://{args.host}:{args.port}/")
     app.run(host=args.host, port=args.port, threaded=True)
 
 

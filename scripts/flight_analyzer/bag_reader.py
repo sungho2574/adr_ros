@@ -14,6 +14,9 @@ MSG_DIR = Path(__file__).resolve().parents[2] / "src/px4_msgs/msg"
 SKIP_TYPES = {"sensor_msgs/msg/CompressedImage", "sensor_msgs/msg/Image"}
 VIDEO_TYPE = "sensor_msgs/msg/CompressedImage"
 VIDEO_TOPIC = "/adr/monitor/image/compressed"
+IMU_TOPIC = "/adr/telemetry/imu"
+BATTERY_TOPIC = "/adr/telemetry/battery"
+FC_TOPIC = "/adr/telemetry/fc_status"
 LEGACY_TOPICS = {
     "/camera/camera_info": "/adr/camera/camera_info",
     "/pl/camera/camera_info": "/adr/camera/camera_info",
@@ -25,6 +28,8 @@ LEGACY_TOPICS = {
 RATE_TOPICS = {
     "/adr/camera/camera_info": "camera",
     "/adr/perception/latency_ms": "perception",
+    IMU_TOPIC: "imu",
+    "/adr/control/action": "policy",
     "/pl/detection/status": "detection",
 }
 CONTROL_SETPOINT = "/fmu/in/trajectory_setpoint"
@@ -155,6 +160,46 @@ def flatten_json(value, prefix=""):
     return {prefix.removesuffix("_"): _scalar(value)}
 
 
+def imu_angles(msg):
+    """Match the HUD's roll, pitch and clockwise heading, in degrees."""
+    q = msg.orientation
+    norm = math.hypot(q.x, q.y, q.z, q.w)
+    if msg.orientation_covariance[0] == -1 or not math.isfinite(norm) or norm < 1e-6:
+        return {"roll_deg": None, "pitch_deg": None, "yaw_deg": None}
+    x, y, z, w = (component / norm for component in (q.x, q.y, q.z, q.w))
+    roll = math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
+    pitch = math.asin(max(-1.0, min(1.0, 2 * (w * y - z * x))))
+    yaw = math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+    return {
+        "roll_deg": math.degrees(roll),
+        "pitch_deg": math.degrees(pitch),
+        "yaw_deg": round(90 - math.degrees(yaw), 1) % 360,
+    }
+
+
+def chart_fields(name, ty, msg):
+    if ty == "std_msgs/msg/String" and name.startswith(("/adr/", "/pl/")):
+        status = json.loads(msg.data)
+        row = flatten_json(status)
+        if name == FC_TOPIC and isinstance(status, dict):
+            armed = status.get("armed")
+            mode = "NO STATUS"
+            if status.get("connected") is True and isinstance(armed, bool):
+                mode = "DISARMED" if not armed else ("AUTO" if status.get("msp_override") is True else "ARMED")
+            row["mode"] = mode
+        return row
+
+    row = flatten(msg)
+    if name == IMU_TOPIC and ty == "sensor_msgs/msg/Imu":
+        row.update(imu_angles(msg))
+    if name == BATTERY_TOPIC and ty == "sensor_msgs/msg/BatteryState":
+        row["remaining_pct"] = 100 * msg.percentage if msg.present and 0 <= msg.percentage <= 1 else None
+        if not msg.present:
+            for field in ("voltage", "current"):
+                row[field] = None
+    return row
+
+
 def load_record(record: Path) -> dict:
     """기록 하나를 토픽별 열(column) 데이터로 읽는다.
 
@@ -205,10 +250,7 @@ def load_record(record: Path) -> dict:
                     continue
                 try:
                     msg = ts.deserialize_cdr(bytes(data), ty)
-                    if ty == "std_msgs/msg/String" and name.startswith(("/adr/", "/pl/")):
-                        flat = flatten_json(json.loads(msg.data))
-                    else:
-                        flat = flatten(msg)
+                    flat = chart_fields(name, ty, msg)
                 except Exception as e:  # 타입 미등록 / .msg 정의 불일치
                     errors[name] = f"{name} ({ty}): {type(e).__name__}: {e}"
                     rows.pop(name, None)

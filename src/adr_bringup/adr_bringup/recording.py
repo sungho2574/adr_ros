@@ -7,19 +7,22 @@ from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 
 
-def recording_arguments():
-    return [
+def recording_arguments(*, arm_trigger=True):
+    arguments = [
         DeclareLaunchArgument('record', default_value='true', choices=['true', 'false']),
         DeclareLaunchArgument('log_dir', default_value=''),
-        DeclareLaunchArgument('record_trigger', default_value='launch', choices=['launch', 'px4_arm']),
     ]
+    if arm_trigger:
+        arguments.append(DeclareLaunchArgument('record_trigger', default_value='launch',
+                                               choices=['launch', 'px4_arm']))
+    return arguments
 
 
-def recorder(profile, *, config_yaml=None):
+def recorder(profile, *, config_yaml=None, trigger=None):
     def setup(context):
         executable = Path(get_package_prefix('adr_logging')) / 'lib/adr_logging/flight_recorder'
-        trigger = LaunchConfiguration('record_trigger').perform(context)
-        command = [str(executable), '--profile', profile, '--trigger', trigger]
+        selected_trigger = trigger or LaunchConfiguration('record_trigger').perform(context)
+        command = [str(executable), '--profile', profile, '--trigger', selected_trigger]
         log_dir = LaunchConfiguration('log_dir').perform(context)
         if log_dir:
             command += ['--log-dir', log_dir]
