@@ -16,7 +16,7 @@ from rclpy.qos import qos_profile_sensor_data
 # Match both the unversioned (Humble/PX4 v1.16) and versioned PX4 DDS topics.
 TOPIC_FILTER = (
     r'^(/adr/(control/(status|action)|perception/(mask|latency_ms)|monitor/(status|image/compressed)'
-    r'|camera/camera_info|telemetry/(battery|imu|fc_status))'
+    r'|camera/camera_info|telemetry/(battery|imu|fc_status|rc))'
     r'|/fmu/out/(vehicle_status|vehicle_land_detected|vehicle_local_position|'
     r'vehicle_attitude|vehicle_gps_position|battery_status|vehicle_command_ack)(_v[0-9]+)?'
     r'|/fmu/in/(trajectory_setpoint|vehicle_command)(_v[0-9]+)?)$'

@@ -27,6 +27,7 @@ betaflight:
   port: /dev/ttyTHS1
   baud: 500000
   imu_hz: 100.0
+  rc_hz: 25.0
   battery_hz: 2.0
   acc_lsb_per_g: 512.0   # Matches deploy. Confirm against the FC's stationary raw acceleration.
   response_timeout_s: 0.025

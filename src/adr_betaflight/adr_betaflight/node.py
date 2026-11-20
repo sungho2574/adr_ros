@@ -13,11 +13,22 @@ from sensor_msgs.msg import BatteryState, Imu
 from std_msgs.msg import String
 
 from .msp import (Client, Command, RejectedCommand, check_override_config, decode_battery,
-                  decode_battery_config, decode_flight_mode, decode_imu)
+                  decode_battery_config, decode_flight_mode, decode_imu, decode_rc)
 from .override import Override
 
 STANDARD_GRAVITY = 9.80665
 LINK_ERRORS = (OSError, ValueError, RejectedCommand)
+
+
+def mode_status(mode):
+    return {
+        'armed': mode.armed if mode is not None else None,
+        'msp_override': mode.override if mode is not None else None,
+        'angle': mode.angle if mode is not None else None,
+        'failsafe': mode.failsafe if mode is not None else None,
+        'rx_loss': mode.rx_loss if mode is not None else None,
+        'failsafe_switch': mode.failsafe_switch if mode is not None else None,
+    }
 
 
 class MspTelemetry(Node):
@@ -27,6 +38,7 @@ class MspTelemetry(Node):
         self.baud = self.declare_parameter('baud', 115200).value
         imu_hz = self.declare_parameter('imu_hz', 100.0).value
         battery_hz = self.declare_parameter('battery_hz', 2.0).value
+        rc_hz = self.declare_parameter('rc_hz', 25.0).value
         acc_lsb_per_g = self.declare_parameter('acc_lsb_per_g', 512.0).value
         self.timeout = self.declare_parameter('response_timeout_s', 0.025).value
         self.frame_id = self.declare_parameter('frame_id', 'base_link').value
@@ -38,21 +50,27 @@ class MspTelemetry(Node):
             raise ValueError('MSP rates, accelerometer scale and timeout must be finite and positive')
         if battery_hz > imu_hz:
             raise ValueError('battery_hz must not exceed imu_hz')
+        if not 0 <= rc_hz <= imu_hz:
+            raise ValueError('rc_hz must be between zero and imu_hz')
 
         self.acc_scale = STANDARD_GRAVITY / acc_lsb_per_g
         self.battery_period = 1 / battery_hz
+        self.rc_period = 1 / rc_hz if rc_hz else None
         self.client = None
         self.battery_config = None
         self.box_ids = None
         self.rc_available = False
         self.override = Override()
         self.next_battery = self.next_status = self.retry_at = 0.0
+        self.next_rc = 0.0
         self.first_imu = True
 
         qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
         self.imu_pub = self.create_publisher(Imu, '/adr/telemetry/imu', qos)
         self.battery_pub = self.create_publisher(BatteryState, '/adr/telemetry/battery', qos)
         self.fc_pub = self.create_publisher(String, '/adr/telemetry/fc_status', qos)
+        if self.rc_period is not None:
+            self.rc_pub = self.create_publisher(String, '/adr/telemetry/rc', qos)
         if self.enable_rc:
             self.create_subscription(String, '/adr/control/rc_action', self.receive_action, qos)
         self.steady_clock = Clock(clock_type=ClockType.STEADY_TIME)
@@ -84,7 +102,7 @@ class MspTelemetry(Node):
                 self.get_logger().error(f'MSP RC disabled: {exc}')
             else:
                 self.rc_available = True
-        self.next_battery = self.next_status = 0.0
+        self.next_battery = self.next_status = self.next_rc = 0.0
         self.first_imu = True
         self.get_logger().info('Betaflight MSP connected')
 
@@ -101,11 +119,14 @@ class MspTelemetry(Node):
 
             poll_battery = now >= self.next_battery
             poll_status = now >= self.next_status
+            poll_rc = self.rc_period is not None and now >= self.next_rc
             commands = [Command.RAW_IMU, Command.ATTITUDE]
             if poll_battery:
                 commands.append(Command.BATTERY_STATE)
-            if (poll_status or self.rc_available) and self.box_ids is not None:
+            if (poll_status or poll_rc or self.rc_available) and self.box_ids is not None:
                 commands.append(Command.STATUS)
+            if poll_rc:
+                commands.append(Command.RC)
             replies = dict(zip(commands, self.client.read_batch(*commands)))
             stamp = self.get_clock().now().to_msg()
             self.publish_imu(decode_imu(replies[Command.RAW_IMU], replies[Command.ATTITUDE]), stamp)
@@ -125,6 +146,16 @@ class MspTelemetry(Node):
                 self.publish_fc_status(True, mode)
             if previous_rc != self.override.state and self.override.state == 'restart_required':
                 self.get_logger().error('Policy RC stopped. Return to manual and restart on the ground.')
+            if poll_rc:
+                self.next_rc += self.rc_period
+                if self.next_rc <= now:
+                    self.next_rc = now + self.rc_period
+                try:
+                    channels = decode_rc(replies[Command.RC])
+                except ValueError as exc:
+                    self.warn(str(exc))
+                else:
+                    self.publish_rc(channels, stamp, mode)
             if poll_battery:
                 self.next_battery = now + self.battery_period
                 try:
@@ -149,12 +180,19 @@ class MspTelemetry(Node):
                 rc_state = 'unavailable'
         self.fc_pub.publish(String(data=json.dumps({
             'connected': connected,
-            'armed': mode.armed if mode is not None else None,
-            'msp_override': mode.override if mode is not None else None,
-            'angle': mode.angle if mode is not None else None,
+            **mode_status(mode),
             'rc_session': self.override.session,
             'rc_state': rc_state,
             'stamp_ns': time.monotonic_ns(),
+        })))
+
+    def publish_rc(self, channels, stamp, mode):
+        roll, pitch, yaw, throttle, *aux = channels
+        self.rc_pub.publish(String(data=json.dumps({
+            'stamp_ns': stamp.sec * 1_000_000_000 + stamp.nanosec,
+            'roll_us': roll, 'pitch_us': pitch, 'yaw_us': yaw, 'throttle_us': throttle,
+            'aux_us': aux,
+            **mode_status(mode),
         })))
 
     def publish_imu(self, sample, stamp):

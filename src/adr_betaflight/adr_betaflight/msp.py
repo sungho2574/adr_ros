@@ -15,6 +15,7 @@ class Command(IntEnum):
     RX_MAP = 64
     STATUS = 101
     RAW_IMU = 102
+    RC = 105
     ATTITUDE = 108
     BOX_IDS = 119
     BATTERY_STATE = 130
@@ -169,12 +170,21 @@ def decode_imu(raw, attitude):
     return ImuSample((ax, ay, az), angular_velocity, orientation)
 
 
+def decode_rc(payload):
+    """Decode FC channel readback in roll, pitch, yaw, throttle, AUX order."""
+    if not 8 <= len(payload) <= 36 or len(payload) % 2:
+        raise ValueError('Invalid Betaflight MSP_RC reply length')
+    return struct.unpack(f'<{len(payload) // 2}H', payload)
+
+
 @dataclass(frozen=True)
 class FlightMode:
     armed: bool
     override: bool
     angle: bool
     failsafe: bool
+    rx_loss: bool | None = None
+    failsafe_switch: bool | None = None
 
 
 def decode_flight_mode(payload, box_ids):
@@ -189,7 +199,13 @@ def decode_flight_mode(payload, box_ids):
     def active(box_id):
         return box_id in box_ids and bool(modes & (1 << box_ids.index(box_id)))
 
-    return FlightMode(armed=active(0), override=active(50), angle=active(1), failsafe=active(27))
+    rx_loss = failsafe_switch = None
+    if len(payload) >= end + 5 and payload[end] >= 5:
+        arming_flags, = struct.unpack_from('<I', payload, end + 1)
+        rx_loss = bool(arming_flags & (1 << 2))
+        failsafe_switch = bool(arming_flags & (1 << 4))
+    return FlightMode(armed=active(0), override=active(50), angle=active(1), failsafe=active(27),
+                      rx_loss=rx_loss, failsafe_switch=failsafe_switch)
 
 
 def check_override_config(client, box_ids):

@@ -61,11 +61,14 @@ ros2 run adr_betaflight msp_telemetry --ros-args \
   -p port:=/dev/ttyTHS1 -p baud:=500000 -p acc_lsb_per_g:=512.0
 ros2 topic hz /adr/telemetry/imu
 ros2 topic echo /adr/telemetry/battery --qos-reliability best_effort
+ros2 topic echo /adr/telemetry/rc --qos-reliability best_effort
 ```
 
 IMU와 자세는 하나의 MSP 요청으로 묶어 **100 Hz**를 목표로 발행한다. 배터리 조회는 **2 Hz**를 목표로 같은 요청에 추가한다. 토픽 타임스탬프는 Jetson의 응답 수신 시각이다. 첫 가속도 raw 샘플을 노드 로그에 남긴다. 기체가 수평 정지 상태일 때 `Z ≈ +512 LSB`와 ROS의 `Z ≈ +9.81 m/s²`를 확인한다. yaw는 FC 헤딩에서 변환하므로 절대 방위 기준의 정확도는 FC 설정에 달려 있다. [Betaflight MSP 응답 형식](https://github.com/betaflight/betaflight/blob/4.5.2/src/main/msp/msp.c#L2191-L2224)
 
 배터리 잔량은 FC에 용량과 전류계가 설정돼 있으면 사용량으로 추정하고, 그 외에는 FC의 셀 전압 범위로 추정한다. 계산에 필요한 설정이 없으면 미측정으로 표시한다. [Betaflight 배터리 잔량 계산](https://github.com/betaflight/betaflight/blob/2025.12.1/src/main/sensors/battery.c#L457-L469)
+
+`MSP_RC`는 기본 **25 Hz**로 같은 MSP 요청에 추가하며, `real.launch.py`와 `fc_smoke_test.launch.py`의 rosbag에 기록된다. `betaflight.rc_hz`로 조절하고 `0.0`으로 조회를 끈다. 각 샘플에 ROS 수신 시각(`stamp_ns`), 마이크로초 단위의 스틱·AUX 값, 같은 요청에서 읽은 모드와 수신 상태를 담는다. 각 채널은 FC가 적용 중인 값으로, MSP가 덮어쓴 경우에는 정책 입력값, failsafe가 적용된 경우에는 FC의 대체값이 들어갈 수 있다. [Betaflight `MSP_RC` 구현](https://github.com/betaflight/betaflight/blob/2026.6.2/src/main/msp/msp.c#L1282-L1286)
 
 ## 토픽
 
@@ -79,7 +82,8 @@ IMU와 자세는 하나의 MSP 요청으로 묶어 **100 Hz**를 목표로 발�
 | `/adr/perception/latency_ms` | 카메라 타임스탬프에서 마스크 발행 직전까지 걸린 시간 |
 | `/adr/telemetry/imu` | Betaflight 각속도·가속도·자세를 담은 `sensor_msgs/Imu` |
 | `/adr/telemetry/battery` | 전압, 전류와 추정 잔량을 담은 `sensor_msgs/BatteryState` |
-| `/adr/telemetry/fc_status` | MSP 연결, 실제 ARM 상태와 MSP OVERRIDE 상태 |
+| `/adr/telemetry/fc_status` | MSP 연결, ARM, MSP OVERRIDE, failsafe 모드와 수신기 손실·FAILSAFE 스위치 플래그 |
+| `/adr/telemetry/rc` | `std_msgs/String` JSON의 `roll_us`, `pitch_us`, `yaw_us`, `throttle_us`, `aux_us`(AUX1부터 순서대로), `armed`, `msp_override`, `failsafe`, `rx_loss`, `failsafe_switch` |
 | `/adr/monitor/image`, `/adr/monitor/image/compressed` | GateNet 마스크와 하단 배터리 전압·잔량을 표시한 320×240 HUD |
 | `/adr/monitor/status` | 배터리 값과 수신 상태 |
 
