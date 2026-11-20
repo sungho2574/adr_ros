@@ -26,7 +26,7 @@ ros2 launch adr_bringup camera_test.launch.py view:=false
 ros2 launch adr_bringup real.launch.py
 ```
 
-기본 파라미터는 [real.yaml](src/adr_bringup/config/real.yaml)에 있다. `config:=/path/to/real.yaml`로 덮어쓸 수 있다. IMX219은 mode 3, 1640×1232, 30 fps다. 카메라 노드에서 320×240 BGR로 하드웨어 축소한 다음 발행한다. 노출 4 ms와 아날로그/ISP 게인 1은 GateNet 인계 설정을 따른다.
+기본 파라미터는 [real.yaml](src/adr_bringup/config/real.yaml)에 있다. `config:=/path/to/real.yaml`로 덮어쓸 수 있다. IMX219은 mode 3, 1640×1232, 30 fps다. 카메라 노드에서 320×240 BGR로 하드웨어 축소한 다음 발행한다. 고정 노출은 8.33 ms이며 아날로그/ISP 게인은 1이다.
 
 ## 영상 송출 스모크 테스트
 
@@ -36,7 +36,7 @@ ros2 launch adr_bringup real.launch.py
 ros2 launch adr_bringup smoke_test.launch.py
 ```
 
-기본 카메라 모드는 실기체와 같은 mode 3이며, 스모크 테스트는 Argus 자동 노출과 게인을 사용한다. 설정 파일의 노출과 게인을 그대로 적용하려면 `auto_exposure:=false`를 지정한다.
+기본 카메라 모드는 실기체와 같은 mode 3이며, 두 스모크 테스트 모두 기본으로 8.33 ms 고정 노출을 사용한다. Argus 자동 노출과 게인을 쓰려면 `auto_exposure:=true`를 지정한다.
 
 실기체 설정으로 카메라, GateNet, HUD, 스트리머를 띄우고 rosbag을 기록한다. 녹화는 `record:=false`로 끄거나 `log_dir:=...`로 저장 경로를 바꿀 수 있다. Flight Analyzer 목록에는 스모크 기록이 `SMOKE`로 표시된다.
 

@@ -49,7 +49,7 @@ def smoke_launch_description(*, with_fc):
     return LaunchDescription([
         *recording_arguments(arm_trigger=False),
         DeclareLaunchArgument('config', default_value=str(config)),
-        DeclareLaunchArgument('auto_exposure', default_value='true', choices=['true', 'false'],
+        DeclareLaunchArgument('auto_exposure', default_value='false', choices=['true', 'false'],
                               description='Use Argus auto exposure and gain for the preview'),
         DeclareLaunchArgument('stream_url', default_value='local',
                               description='local starts MediaMTX, or supply an RTSP publish URL'),
