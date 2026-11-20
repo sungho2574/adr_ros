@@ -30,13 +30,23 @@ ros2 launch adr_bringup real.launch.py
 
 ## 영상 송출 스모크 테스트
 
+카메라, GateNet, HUD와 RTSP 송출만 점검한다.
+
 ```bash
 ros2 launch adr_bringup smoke_test.launch.py
 ```
 
+기본 카메라 모드는 실기체와 같은 mode 3이며, 스모크 테스트는 Argus 자동 노출과 게인을 사용한다. 설정 파일의 노출과 게인을 그대로 적용하려면 `auto_exposure:=false`를 지정한다.
+
 실기체 설정으로 카메라, GateNet, HUD, 스트리머를 띄우고 rosbag을 기록한다. 녹화는 `record:=false`로 끄거나 `log_dir:=...`로 저장 경로를 바꿀 수 있다. Flight Analyzer 목록에는 스모크 기록이 `SMOKE`로 표시된다.
 
 기본 송출은 로컬 MediaMTX를 사용한다. 다른 기기에서 `http://JETSON_IP:8889/hud` 또는 `rtsp://JETSON_IP:8554/hud`로 확인할 수 있다. 기존 RTSP 서버를 쓰려면 `stream_url:=rtsp://HOST:8554/hud`를 지정한다.
+
+카메라 파이프라인과 Betaflight UART 텔레메트리를 함께 점검하려면 아래 런치를 사용한다. HUD에서 FC 연결 상태와 자세를 확인할 수 있다.
+
+```bash
+ros2 launch adr_bringup fc_smoke_test.launch.py
+```
 
 ## Betaflight UART 텔레메트리
 
