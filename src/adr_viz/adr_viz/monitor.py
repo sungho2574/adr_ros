@@ -59,7 +59,7 @@ def render(frame, mask, battery, flight, max_width):
     gate = mask != 0
     canvas[gate] = (canvas[gate].astype(np.uint16) + (40, 230, 50)) // 2
 
-    if max_width:
+    if max_width and max_width != canvas.shape[1]:
         h, w = canvas.shape[:2]
         interpolation = cv2.INTER_AREA if max_width < w else cv2.INTER_LINEAR
         canvas = cv2.resize(canvas, (max_width, round(h * max_width / w)),
@@ -121,7 +121,7 @@ class Monitor(Node):
     def __init__(self):
         super().__init__('racing_monitor')
         defaults = {
-            'fps': 30.0, 'jpeg_quality': 70, 'output_width': 640, 'stale_after': 2.0,
+            'fps': 30.0, 'jpeg_quality': 70, 'output_width': 320, 'stale_after': 2.0,
             'battery_source': 'ros', 'battery_topic': '', 'fc_stale_after': 0.5,
         }
         cfg = {name: self.declare_parameter(name, value).value for name, value in defaults.items()}

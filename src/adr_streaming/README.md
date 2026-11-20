@@ -1,7 +1,7 @@
 # Live HUD streaming
 
 `adr_streaming` subscribes to the Jetson's local BGR HUD (`/adr/monitor/image`),
-encodes H.264 with GStreamer and publishes to MediaMTX over RTSP. The real profile uses a 640×480 HUD with a 30 Hz render target.
+encodes H.264 with GStreamer and publishes to MediaMTX over RTSP. The real profile uses a 320×240 HUD with a 30 Hz render target.
 The JPEG HUD in the bag plays back independently of the live stream.
 
 ## Jetson
@@ -39,7 +39,7 @@ With the default MediaMTX ports, browser playback needs TCP 8889 and UDP 8189
 reachable on the Jetson. For RTSP playback over TCP, allow TCP 8554.
 The Jetson publisher uses RTSP over UDP on loopback by default.
 
-The defaults are 640×480, up to 30 fps, 700 kbps, x264 ultrafast/zerolatency,
+The defaults are 320×240, up to 25 fps, 450 kbps, x264 ultrafast/zerolatency,
 no B-frames, an IDR at most every 0.5 s at full frame rate, and one queued
 raw frame in GStreamer. Keep the raw HUD subscriber on Jetson to avoid
 sending the raw feed over DDS. The stream can also be started separately to
@@ -62,6 +62,7 @@ gst-launch-1.0 -v \
   rtspsrc location=rtsp://10.164.13.71:8554/hud \
     protocols=udp latency=20 drop-on-latency=true do-retransmission=false \
   ! rtph264depay ! h264parse ! avdec_h264 \
+  ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream \
   ! videoconvert ! autovideosink sync=false
 ```
 

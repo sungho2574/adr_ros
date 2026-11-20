@@ -34,7 +34,7 @@ betaflight:
 
 viz:
   fps: 30.0
-  output_width: 640
+  output_width: 320
   jpeg_quality: 70
   stale_after: 2.0
   battery_source: ros   # ros: sensor_msgs/BatteryState; px4: px4_msgs/BatteryStatus

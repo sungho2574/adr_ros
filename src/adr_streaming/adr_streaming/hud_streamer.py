@@ -17,8 +17,8 @@ class HudStreamer(Node):
     def __init__(self):
         super().__init__('hud_streamer')
         defaults = {
-            'url': '', 'input_topic': '/adr/monitor/image', 'width': 640, 'height': 480,
-            'fps': 30, 'bitrate_kbps': 700, 'rtsp_transport': 'udp',
+            'url': '', 'input_topic': '/adr/monitor/image', 'width': 320, 'height': 240,
+            'fps': 25, 'bitrate_kbps': 450, 'rtsp_transport': 'udp',
         }
         cfg = {key: self.declare_parameter(key, value).value for key, value in defaults.items()}
         self.url = cfg['url']
@@ -54,7 +54,7 @@ class HudStreamer(Node):
             'videoconvert ! videoscale add-borders=true ! '
             f'video/x-raw,format=I420,width={self.width},height={self.height} ! '
             f'x264enc tune=zerolatency speed-preset=ultrafast bitrate={self.bitrate} '
-            f'key-int-max={max(1, self.fps // 2)} bframes=0 threads=2 vbv-buf-capacity=100 ! '
+            f'key-int-max={max(1, self.fps * 2 // 5)} bframes=0 threads=2 vbv-buf-capacity=80 ! '
             'video/x-h264,profile=constrained-baseline ! h264parse config-interval=-1 ! '
             f'rtspclientsink name=output protocols={self.transport} latency=0 rtx-time=0 tcp-timeout=2000000'
         )

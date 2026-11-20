@@ -80,7 +80,7 @@ IMU와 자세는 하나의 MSP 요청으로 묶어 **100 Hz**를 목표로 발�
 | `/adr/telemetry/imu` | Betaflight 각속도·가속도·자세를 담은 `sensor_msgs/Imu` |
 | `/adr/telemetry/battery` | 전압, 전류와 추정 잔량을 담은 `sensor_msgs/BatteryState` |
 | `/adr/telemetry/fc_status` | MSP 연결, 실제 ARM 상태와 MSP OVERRIDE 상태 |
-| `/adr/monitor/image`, `/adr/monitor/image/compressed` | GateNet 마스크와 하단 배터리 전압·잔량을 표시한 640×480 HUD |
+| `/adr/monitor/image`, `/adr/monitor/image/compressed` | GateNet 마스크와 하단 배터리 전압·잔량을 표시한 320×240 HUD |
 | `/adr/monitor/status` | 배터리 값과 수신 상태 |
 
 영상과 마스크는 best effort를 사용한다. 정책용 마스크 구독은 depth 1이며 카메라 타임스탬프를 보존한다. Argus 버퍼 PTS를 쓸 수 없으면 카메라 도착 시각을 사용한다. HUD는 동일한 타임스탬프의 영상과 마스크를 사용한다.
