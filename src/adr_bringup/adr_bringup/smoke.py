@@ -11,7 +11,7 @@ from launch.events import Shutdown
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-from adr_bringup.real_vision import vision_nodes
+from adr_bringup.real_vision import enable_auto_exposure, vision_nodes
 from adr_bringup.recording import recorder, recording_arguments
 from adr_bringup.streaming import streaming_actions
 
@@ -21,8 +21,7 @@ def setup(context, *, with_fc):
     config = yaml.safe_load(path.read_text(encoding='utf-8'))
     config['perception']['record'] = False
     if LaunchConfiguration('auto_exposure').perform(context) == 'true':
-        config['camera'].update(exposure_time_range='', gain_range='',
-                                isp_digital_gain_range='', ae_lock=False)
+        enable_auto_exposure(config)
     stream_url = LaunchConfiguration('stream_url').perform(context).strip()
     processes = vision_nodes(config) + streaming_actions(stream_url, required=True)
     if with_fc:

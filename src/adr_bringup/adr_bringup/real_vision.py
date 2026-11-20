@@ -5,6 +5,11 @@ from ament_index_python.packages import get_package_share_directory
 from launch_ros.actions import Node
 
 
+def enable_auto_exposure(config):
+    config['camera'].update(exposure_time_range='', gain_range='',
+                            isp_digital_gain_range='', ae_lock=False)
+
+
 def vision_nodes(config):
     perception = config['perception']
     configs = Path(get_package_share_directory('adr_perception')) / 'configs'

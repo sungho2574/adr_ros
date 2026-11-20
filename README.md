@@ -26,7 +26,7 @@ ros2 launch adr_bringup camera_test.launch.py view:=false
 ros2 launch adr_bringup real.launch.py
 ```
 
-기본 파라미터는 [real.yaml](src/adr_bringup/config/real.yaml)에 있다. `config:=/path/to/real.yaml`로 덮어쓸 수 있다. IMX219은 mode 3, 1640×1232, 30 fps다. 카메라 노드에서 320×240 BGR로 하드웨어 축소한 다음 발행한다. 고정 노출은 8.33 ms이며 아날로그/ISP 게인은 1이다.
+기본 파라미터는 [real.yaml](src/adr_bringup/config/real.yaml)에 있다. `config:=/path/to/real.yaml`로 덮어쓸 수 있다. IMX219은 mode 3, 1640×1232, 30 fps다. 카메라 노드에서 320×240 BGR로 하드웨어 축소한 다음 발행한다. 고정 노출은 8.33 ms이며 아날로그/ISP 게인은 1이다. `real.launch.py auto_exposure:=true`는 Argus 자동 노출과 게인을 사용한다.
 
 ## 영상 송출 스모크 테스트
 

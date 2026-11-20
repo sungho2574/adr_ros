@@ -12,7 +12,7 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from adr_bringup.recording import recorder, recording_arguments
-from adr_bringup.real_vision import vision_nodes
+from adr_bringup.real_vision import enable_auto_exposure, vision_nodes
 from adr_bringup.streaming import streaming_actions
 
 
@@ -20,6 +20,9 @@ def setup(context):
     config_path = Path(LaunchConfiguration('config').perform(context)).expanduser().resolve()
     config_yaml = config_path.read_text(encoding='utf-8')
     config = yaml.safe_load(config_yaml)
+    if LaunchConfiguration('auto_exposure').perform(context) == 'true':
+        enable_auto_exposure(config)
+        config_yaml = yaml.safe_dump(config, sort_keys=False)
     nodes = vision_nodes(config)
     msp = LaunchConfiguration('msp').perform(context) == 'true' and 'betaflight' in config
     bundle = LaunchConfiguration('policy_bundle').perform(context).strip()
@@ -54,6 +57,8 @@ def generate_launch_description():
         *recording_arguments(),
         DeclareLaunchArgument('config', default_value=str(
             Path(get_package_share_directory('adr_bringup')) / 'config/real.yaml')),
+        DeclareLaunchArgument('auto_exposure', default_value='false', choices=['true', 'false'],
+                              description='Use Argus auto exposure and gain'),
         DeclareLaunchArgument('stream_url', default_value='local',
                               description='local starts MediaMTX, an RTSP URL uses an existing server, '
                                           'and an empty value disables streaming'),
