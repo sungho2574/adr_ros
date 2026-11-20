@@ -67,12 +67,15 @@ IMU와 자세는 하나의 MSP 요청으로 묶어 **100 Hz**를 목표로 발�
 | `/adr/perception/latency_ms` | 카메라 타임스탬프에서 마스크 발행 직전까지 걸린 시간 |
 | `/adr/telemetry/imu` | Betaflight 각속도·가속도·자세를 담은 `sensor_msgs/Imu` |
 | `/adr/telemetry/battery` | 전압, 전류와 추정 잔량을 담은 `sensor_msgs/BatteryState` |
+| `/adr/telemetry/fc_status` | MSP 연결, 실제 ARM 상태와 MSP OVERRIDE 상태 |
 | `/adr/monitor/image`, `/adr/monitor/image/compressed` | GateNet 마스크와 하단 배터리 전압·잔량을 표시한 640×480 HUD |
 | `/adr/monitor/status` | 배터리 값과 수신 상태 |
 
 영상과 마스크는 best effort를 사용한다. 정책용 마스크 구독은 depth 1이며 카메라 타임스탬프를 보존한다. Argus 버퍼 PTS를 쓸 수 없으면 카메라 도착 시각을 사용한다. HUD는 동일한 타임스탬프의 영상과 마스크를 사용한다.
 
 HUD 기본 배터리 입력은 `/adr/telemetry/battery`의 `sensor_msgs/BatteryState`다. 전압과 0~1 범위의 잔량을 표시한다. PX4 DDS를 쓰는 경우 `px4_msgs`를 준비하고 `viz.battery_source: px4`로 설정한다. 배터리 발행이 없거나 데이터가 오래되면 빈 값을 표시한다.
+
+HUD 우상단에는 MSP 연결과 롤·피치·요 각도를 표시한다. 좌상단 상태에 맞춰 테두리는 `DISARM` 회색, `ARM` 주황색, `AUTO` 초록색으로 바뀐다. `AUTO`는 FC가 ARM 상태에서 MSP OVERRIDE를 보고할 때 표시한다. FC 상태가 끊기거나 0.5초 동안 갱신되지 않으면 빨간 테두리와 `NO STATUS`를 표시한다. [Betaflight MSP OVERRIDE](https://betaflight.com/docs/wiki/guides/current/MSP-Companion-Computer-Control)
 
 실기체 런치는 기본으로 `flight_logs/`에 rosbag을 만들고 종료 시 마감한다. `record:=false`로 끄고, `log_dir:=...`로 경로를 바꾼다. PX4의 ARM/DISARM에 맞추려면 `record_trigger:=px4_arm`을 지정한다. GateNet 인계 형식의 입력 JPEG·마스크 PNG·CSV가 필요하면 `perception.record: true`를 설정한다. MediaMTX가 PATH에 있으면 로컬 HUD 스트림을 시작한다. `stream_url:=`로 끄거나 RTSP 주소를 지정할 수 있다.
 

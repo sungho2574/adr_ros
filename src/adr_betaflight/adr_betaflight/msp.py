@@ -10,8 +10,10 @@ import time
 class Command(IntEnum):
     FC_VARIANT = 2
     BATTERY_CONFIG = 32
+    STATUS = 101
     RAW_IMU = 102
     ATTITUDE = 108
+    BOX_IDS = 119
     BATTERY_STATE = 130
     MULTIPLE_MSP = 230
 
@@ -65,6 +67,20 @@ class Client:
         if command is Command.MULTIPLE_MSP:
             raise ValueError('Use read_batch for MSP_MULTIPLE_MSP')
         return self._request(command, b'')
+
+    def read_box_ids(self):
+        """Read the permanent mode IDs in the order used by MSP_STATUS."""
+        ids = bytearray()
+        for page in range(4):
+            part = self._request(Command.BOX_IDS, bytes((page,)))
+            if len(part) > 32:
+                raise ValueError('MSP_BOXIDS returned an oversized page')
+            ids.extend(part)
+            if len(part) < 32:
+                break
+        if 0 not in ids or len(ids) != len(set(ids)):
+            raise ValueError('Invalid Betaflight mode IDs')
+        return bytes(ids)
 
     def read_batch(self, *commands):
         commands = tuple(Command(cmd) for cmd in commands)
@@ -134,6 +150,20 @@ def decode_imu(raw, attitude):
         cr * cp * cy + sr * sp * sy,
     )
     return ImuSample((ax, ay, az), angular_velocity, orientation)
+
+
+def decode_flight_mode(payload, box_ids):
+    if len(payload) < 16:
+        raise ValueError('Truncated MSP_STATUS reply')
+    extra_bytes = payload[15] & 0x0F
+    end = 16 + extra_bytes
+    if len(payload) < end or len(box_ids) > 8 * (4 + extra_bytes):
+        raise ValueError('Truncated MSP_STATUS mode flags')
+    modes = int.from_bytes(payload[6:10] + payload[16:end], 'little')
+    # Permanent IDs, not fixed bit positions. MSP packs only boxes enabled on the FC.
+    armed = bool(modes & (1 << box_ids.index(0)))
+    override = 50 in box_ids and bool(modes & (1 << box_ids.index(50)))
+    return armed, override
 
 
 @dataclass(frozen=True)

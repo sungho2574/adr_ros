@@ -1,4 +1,5 @@
-"""Publish paired Betaflight IMU and battery telemetry via ROS 2."""
+"""Publish Betaflight IMU, battery and FC status via ROS 2."""
+import json
 import math
 import time
 
@@ -9,9 +10,10 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 import serial
 from sensor_msgs.msg import BatteryState, Imu
+from std_msgs.msg import String
 
 from .msp import (Client, Command, RejectedCommand, decode_battery, decode_battery_config,
-                  decode_imu)
+                  decode_flight_mode, decode_imu)
 
 STANDARD_GRAVITY = 9.80665
 LINK_ERRORS = (OSError, ValueError, RejectedCommand)
@@ -39,12 +41,14 @@ class MspTelemetry(Node):
         self.battery_period = 1 / battery_hz
         self.client = None
         self.battery_config = None
-        self.next_battery = self.retry_at = 0.0
+        self.box_ids = None
+        self.next_battery = self.next_status = self.retry_at = 0.0
         self.first_imu = True
 
         qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
         self.imu_pub = self.create_publisher(Imu, '/adr/telemetry/imu', qos)
         self.battery_pub = self.create_publisher(BatteryState, '/adr/telemetry/battery', qos)
+        self.fc_pub = self.create_publisher(String, '/adr/telemetry/fc_status', qos)
         self.steady_clock = Clock(clock_type=ClockType.STEADY_TIME)
         self.create_timer(1 / imu_hz, self.tick, clock=self.steady_clock)
         self.get_logger().info(f'Polling {self.device} at {self.baud} baud')
@@ -62,7 +66,12 @@ class MspTelemetry(Node):
             self.battery_config = decode_battery_config(self.client.read(Command.BATTERY_CONFIG))
         except (ValueError, RejectedCommand) as exc:
             self.warn(f'Battery configuration unavailable: {exc}')
-        self.next_battery = 0.0
+        self.box_ids = None
+        try:
+            self.box_ids = self.client.read_box_ids()
+        except (ValueError, RejectedCommand) as exc:
+            self.warn(f'Flight mode IDs unavailable: {exc}')
+        self.next_battery = self.next_status = 0.0
         self.first_imu = True
         self.get_logger().info('Betaflight MSP connected')
 
@@ -75,24 +84,45 @@ class MspTelemetry(Node):
                 return
 
             poll_battery = now >= self.next_battery
-            commands = (Command.RAW_IMU, Command.ATTITUDE)
+            poll_status = now >= self.next_status
+            commands = [Command.RAW_IMU, Command.ATTITUDE]
             if poll_battery:
-                commands += (Command.BATTERY_STATE,)
-            raw, attitude, *battery = self.client.read_batch(*commands)
+                commands.append(Command.BATTERY_STATE)
+            if poll_status and self.box_ids is not None:
+                commands.append(Command.STATUS)
+            replies = dict(zip(commands, self.client.read_batch(*commands)))
             stamp = self.get_clock().now().to_msg()
-            self.publish_imu(decode_imu(raw, attitude), stamp)
+            self.publish_imu(decode_imu(replies[Command.RAW_IMU], replies[Command.ATTITUDE]), stamp)
+            if poll_status:
+                self.next_status = now + 0.1
+                self.publish_flight_mode(replies.get(Command.STATUS))
             if poll_battery:
                 self.next_battery = now + self.battery_period
                 try:
-                    sample = decode_battery(battery[0], self.battery_config)
+                    sample = decode_battery(replies[Command.BATTERY_STATE], self.battery_config)
                 except ValueError as exc:
                     self.warn(str(exc))
                 else:
                     self.publish_battery(sample, stamp)
         except LINK_ERRORS as exc:
             self.disconnect()
+            self.publish_fc_status(False)
             self.retry_at = time.monotonic() + 1.0
             self.warn(f'MSP link {self.device}: {exc}')
+
+    def publish_flight_mode(self, payload):
+        armed = override = None
+        if payload is not None:
+            try:
+                armed, override = decode_flight_mode(payload, self.box_ids)
+            except ValueError as exc:
+                self.warn(str(exc))
+        self.publish_fc_status(True, armed, override)
+
+    def publish_fc_status(self, connected, armed=None, msp_override=None):
+        self.fc_pub.publish(String(data=json.dumps({
+            'connected': connected, 'armed': armed, 'msp_override': msp_override,
+        })))
 
     def publish_imu(self, sample, stamp):
         if not any(sample.acceleration_raw):
