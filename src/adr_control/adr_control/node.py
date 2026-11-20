@@ -21,6 +21,7 @@ MASK_SHAPE = (64, 64)
 ACTION_ORDER = ('throttle', 'roll', 'pitch', 'yaw_rate')
 FLU_TO_FRD = np.array([1, -1, -1], dtype=np.float32)
 STANDARD_GRAVITY = 9.80665
+FC_STATUS_TIMEOUT_NS = 250_000_000
 QOS = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
 
 
@@ -78,6 +79,9 @@ class PolicyNode(Node):
         super().__init__('policy_node')
         bundle_dir = self.declare_parameter('bundle_dir', '').value
         self.bench_imu = self.declare_parameter('bench_imu', False).value
+        self.enable_rc = self.declare_parameter('enable_rc', False).value
+        if self.enable_rc and self.bench_imu:
+            raise ValueError('RC override requires measured IMU observations')
         self.mask_timeout = self.declare_parameter('mask_timeout_s', 0.15).value
         self.imu_timeout = self.declare_parameter('imu_timeout_s', 0.05).value
         if any(not math.isfinite(value) or value <= 0
@@ -96,6 +100,9 @@ class PolicyNode(Node):
         if (meta['control']['freq_hz'] != 100 or tuple(meta['control']['action']) != ACTION_ORDER
                 or tuple(meta['dims']['image']) != (*MASK_SHAPE, 1)):
             raise ValueError('Expected a 100 Hz deploy bundle with 64x64x1 masks and the standard action order')
+        if self.enable_rc and (meta['control']['angle_limit_deg'] != 55.0
+                               or not math.isclose(meta['control']['yaw_rate_max_dps'], 229.183118, abs_tol=0.5)):
+            raise ValueError('RC override expects a policy trained for 55° ANGLE and 229°/s full-stick yaw')
         vector_sizes = {'rates': 3, 'acc': 3, 'att': 2, 'flight_plan': len(self.plan.vector)}
         if (set(self.policy.vec_keys) != vector_sizes.keys()
                 or len(self.policy.vec_keys) != len(vector_sizes)
@@ -112,6 +119,12 @@ class PolicyNode(Node):
         self.last_report_ns = time.monotonic_ns()
         self.action_pub = self.create_publisher(Float32MultiArray, '/adr/control/action', QOS)
         self.status_pub = self.create_publisher(String, '/adr/control/status', QOS)
+        self.fc_session = self.session = None
+        self.fc_stamp_ns = 0
+        if self.enable_rc:
+            self.state = 'waiting_for_override'
+            self.rc_pub = self.create_publisher(String, '/adr/control/rc_action', QOS)
+            self.create_subscription(String, '/adr/telemetry/fc_status', self.receive_fc, QOS)
         self.create_subscription(Image, '/adr/perception/mask', self.receive_mask, QOS)
         if self.bench_imu:
             self.bench_observation = {
@@ -132,6 +145,21 @@ class PolicyNode(Node):
     def receive_imu(self, msg):
         self.imu = self.receive(msg, imu_observation, self.imu, self.imu_timeout)
 
+    def receive_fc(self, msg):
+        try:
+            status = json.loads(msg.data)
+            if not isinstance(status, dict):
+                return
+            stamp = status['stamp_ns']
+            if (type(stamp) is not int or stamp <= self.fc_stamp_ns
+                    or not 0 <= time.monotonic_ns() - stamp <= FC_STATUS_TIMEOUT_NS):
+                return
+        except (ValueError, KeyError):
+            return
+        self.fc_stamp_ns = stamp
+        session = status.get('rc_session')
+        self.fc_session = session if status.get('connected') is True and isinstance(session, str) else None
+
     def receive(self, msg, decode, previous, timeout):
         arrival = time.monotonic_ns()
         stamp = msg.header.stamp
@@ -147,16 +175,19 @@ class PolicyNode(Node):
             self.get_logger().warning(str(exc), throttle_duration_sec=5.0)
             return previous
 
+    def reset_policy(self):
+        self.policy.reset()
+        self.plan.reset()
+        self.first = True
+        self.last_step = None
+
     def wait_for_input(self, state):
         if self.state == 'running' and not self.bench_imu:
             self.stopped = True
             state = f'stopped_{state}'
         if not self.first:
-            self.policy.reset()
-            self.plan.reset()
-            self.first = True
+            self.reset_policy()
         self.state = state
-        self.last_step = None
 
     def input_ages(self, steady_now):
         ros_now = self.get_clock().now().nanoseconds
@@ -167,6 +198,20 @@ class PolicyNode(Node):
         if self.stopped:
             return
         started = time.monotonic_ns()
+        if self.enable_rc:
+            if self.fc_session is not None and started - self.fc_stamp_ns > FC_STATUS_TIMEOUT_NS:
+                self.wait_for_input('stale_fc_status')
+                return
+            if self.fc_session is None:
+                if self.session is not None:
+                    self.reset_policy()
+                    self.session = None
+                self.state = 'waiting_for_override'
+                return
+            if self.session != self.fc_session:
+                self.reset_policy()
+                self.session = self.fc_session
+                self.state = 'waiting_for_inputs'
         mask_age, imu_age = self.input_ages(started)
         if mask_age is None or mask_age > self.mask_timeout:
             self.wait_for_input('waiting_for_mask' if self.mask is None else 'stale_mask')
@@ -198,7 +243,12 @@ class PolicyNode(Node):
         passed = self.plan.update(float(gate_position[0]), PERIOD_S)
         self.steps += 1
         self.state = 'running'
-        self.action_pub.publish(Float32MultiArray(data=action.tolist()))
+        values = action.tolist()
+        self.action_pub.publish(Float32MultiArray(data=values))
+        if self.enable_rc:
+            self.rc_pub.publish(String(data=json.dumps({
+                'session': self.session, 'stamp_ns': finished, 'action': values,
+            }, allow_nan=False)))
         self.last_step = {
             'step_ms': step_s * 1000,
             'gate_index': gate_index,
@@ -216,6 +266,7 @@ class PolicyNode(Node):
         status = {
             'state': self.state,
             'bench_imu': self.bench_imu,
+            'rc_enabled': self.enable_rc,
             'step_hz': rate,
             'steps': self.steps,
             'overruns': int(self.overruns),

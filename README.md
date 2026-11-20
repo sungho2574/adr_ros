@@ -87,31 +87,43 @@ IMU와 자세는 하나의 MSP 요청으로 묶어 **100 Hz**를 목표로 발�
 
 HUD 기본 배터리 입력은 `/adr/telemetry/battery`의 `sensor_msgs/BatteryState`다. 전압과 0~1 범위의 잔량을 표시한다. PX4 DDS를 쓰는 경우 `px4_msgs`를 준비하고 `viz.battery_source: px4`로 설정한다. 배터리 발행이 없거나 데이터가 오래되면 빈 값을 표시한다.
 
-HUD 우상단에는 MSP 연결과 롤·피치·요 각도를 표시한다. 좌상단 상태에 맞춰 테두리는 `DISARM` 회색, `ARM` 주황색, `AUTO` 초록색으로 바뀐다. `AUTO`는 FC가 ARM 상태에서 MSP OVERRIDE를 보고할 때 표시한다. FC 상태가 끊기거나 0.5초 동안 갱신되지 않으면 빨간 테두리와 `NO STATUS`를 표시한다. [Betaflight MSP OVERRIDE](https://betaflight.com/docs/wiki/guides/current/MSP-Companion-Computer-Control)
+HUD 우상단에는 MSP 연결과 롤·피치·요 각도를 표시한다. 좌상단 상태에 맞춰 테두리는 `DISARM` 회색, `ARM` 주황색, `AUTO` 초록색으로 바뀐다. `policy_rc:=true`에서는 정책 명령이 FC에 전달되기 시작하면 `AUTO`로 바뀐다. 텔레메트리 모드에서는 FC가 ARM 상태에서 MSP OVERRIDE를 보고하면 `AUTO`가 표시된다. FC 상태가 끊기거나 0.5초 동안 갱신되지 않으면 빨간 테두리와 `NO STATUS`를 표시한다. [Betaflight MSP OVERRIDE](https://betaflight.com/docs/wiki/guides/current/MSP-Companion-Computer-Control)
 
 실기체 런치는 기본으로 `flight_logs/`에 rosbag을 만들고 종료 시 마감한다. `record:=false`로 끄고, `log_dir:=...`로 경로를 바꾼다. PX4의 ARM/DISARM에 맞추려면 `record_trigger:=px4_arm`을 지정한다. GateNet 인계 형식의 입력 JPEG·마스크 PNG·CSV가 필요하면 `perception.record: true`를 설정한다. MediaMTX가 PATH에 있으면 로컬 HUD 스트림을 시작한다. `stream_url:=`로 끄거나 RTSP 주소를 지정할 수 있다.
 
 ## 100 Hz 정책 추론
 
-`adr_control`은 `deploy/onboard.py`의 NumPy 정책과 게이트 전환 로직을 사용한다. `bundle_dir`에는 `policy_meta.json`과 `policy_weights.npz`가 필요하다. 첨부한 `deploy`는 export 소스만 포함한다. 번들의 시작 게이트와 전환 조건을 읽고, 같은 마스크를 재사용하는 tick에서는 CNN 결과를 캐시한다.
+`adr_control`은 `onboard.py`의 NumPy 정책과 게이트 전환 로직을 사용한다. `b6p53M` 번들(`team44up`, 학습 스텝 6,530,400)의 `policy_meta.json`과 `policy_weights.npz`는 `adr_control`과 함께 설치한다. 정책은 번들의 시작 게이트와 전환 조건을 읽고, 같은 마스크를 재사용하는 tick에서는 CNN 결과를 캐시한다.
 
 ```bash
 ros2 launch adr_bringup real.launch.py \
-  policy_bundle:=/absolute/path/to/deploy_bundle policy_bench_imu:=true
+  policy_bundle:=b6p53M policy_bench_imu:=true
 ros2 topic echo /adr/control/status --qos-reliability best_effort
 ```
 
-`policy_bench_imu:=true`는 정지·수평 IMU 관측값을 넣어 GateNet과 정책을 벤치에서 실행한다. 실측 IMU를 쓸 때는 이 옵션을 빼고, 카메라 스택과 같은 ROS 도메인에 `/adr/telemetry/imu`를 발행한다. 정책 노드만 실행할 때는 `ros2 run adr_control policy_node --ros-args -p bundle_dir:=/absolute/path/to/deploy_bundle`를 사용한다.
+`policy_bench_imu:=true`는 정지·수평 IMU 관측값을 넣어 GateNet과 정책을 벤치에서 실행한다. 실측 IMU를 쓰는 추론은 `policy_bundle:=b6p53M`으로 실행한다. 다른 내보내기 번들은 `policy_bundle:=/absolute/path/to/deploy_bundle`로 지정한다. 정책 노드만 실행할 때는 `ros2 run adr_control policy_node --ros-args -p bundle_dir:=/absolute/path/to/deploy_bundle`를 사용한다.
 
 | 토픽 | 내용 |
 |---|---|
 | `/adr/perception/mask` | 카메라 타임스탬프가 있는 64×64 GateNet 마스크. 최신 값을 100 Hz 루프에서 재사용 |
 | `/adr/telemetry/imu` | 자세·각속도·가속도가 채워진 `sensor_msgs/Imu`. 자세는 ENU 월드 기준의 기체 FLU 쿼터니언, 각속도는 rad/s, 가속도는 정지 시 +Z에 약 9.81 m/s²가 들어오는 기체 FLU 값 |
 | `/adr/control/action` | `Float32MultiArray`에 담은 4개 정규화 액션. 순서는 throttle, roll, pitch, yaw rate |
+| `/adr/control/rc_action` | `policy_rc:=true`에서 현재 인계 세션 ID, Jetson 단조 시계의 생성 시각, 4개 정규화 액션을 담은 JSON |
 | `/adr/control/status` | 1초마다 발행하는 JSON. 실측 추론 빈도, 10 ms 이상 걸린 횟수, 입력 나이, 게이트 인덱스와 `p_g` 포함 |
 
 입출력은 best effort, depth 1이다. 카메라와 IMU의 타임스탬프는 노드와 같은 ROS 시계를 사용한다. 기본 입력 유효기간은 마스크 150 ms, IMU 50 ms다. 두 값은 단독 노드에서 `mask_timeout_s`, `imu_timeout_s` 파라미터로 설정한다. 입력이 만료되면 액션 발행을 멈추고 정책 메모리와 게이트 인덱스를 초기화한다. 벤치 모드는 새 입력으로 추론을 재개한다. 실측 IMU 모드에서 실행 중 입력이 만료되면 노드 재시작을 요구한다.
 
-Betaflight UART는 MSP 조회 전용이다. 이후 RC 제어 연동 단계에서 입력이 끊기면 조종자에게 제어권을 돌려주고 지상에서만 정책을 다시 시작하는 조건을 적용한다.
+## Betaflight 정책 제어
+
+```bash
+ros2 launch adr_bringup real.launch.py policy_rc:=true
+ros2 topic echo /adr/telemetry/fc_status --qos-reliability best_effort
+```
+
+`policy_rc:=true`는 기본으로 설치된 `b6p53M`을 쓰고 기존 Jetson UART에서 `MSP_SET_RAW_RC`를 보낸다. `adr_betaflight`는 FC가 Betaflight 2026.6 이상, 물리 수신기, AETR 맵과 ANGLE·MSP OVERRIDE 모드를 보고할 때 RC 경로를 연다. 벤치 IMU와 일반 추론에서는 RC 발행이 비활성화된다.
+
+FC 설정에서 `msp_override_channels_mask = 15`, `msp_override_failsafe = OFF`, `angle_limit = 55`, yaw 최대 스틱 각속도 약 229°/s를 확인한다. ARM과 MSP OVERRIDE는 물리 조종기의 AUX 스위치에 매핑한다. 100 Hz마다 텔레메트리 조회와 RC 쓰기가 각각 한 번씩 이뤄지므로 `serial_update_rate_hz = 500`에서 시작해 Jetson에서 IMU 및 정책 발행률을 측정한다. ROS 토픽 조회는 `real.yaml`과 같은 `ROS_DOMAIN_ID`에서 실행한다. [Betaflight MSP OVERRIDE](https://betaflight.com/docs/wiki/guides/current/MSP-Companion-Computer-Control)
+
+지상에서 DISARM·OVERRIDE OFF 상태로 런치한 뒤, ARM·ANGLE 상태에서 조종자가 OVERRIDE를 켜면 정책 메모리와 게이트 순서를 G1부터 시작한다. 정상 인계가 이뤄지면 `fc_status.rc_state`가 `active`가 된다. 조종자가 스위치를 끄면 수동으로 돌아가며, 다음 인계는 다시 DISARM·OVERRIDE OFF를 거쳐야 한다. 마스크나 IMU가 만료되면 정책 발행이 멈추고, 새 액션이 50 ms 동안 도착하지 않으면 MSP 브리지가 수신기로 제어권을 넘긴다. UART 자체가 끊기면 FC가 마지막 MSP 프레임에서 약 300 ms 뒤 수신기로 복귀한다. 이 경우 지상에서 수동 복귀와 DISARM을 확인한 뒤 런치를 다시 시작한다. 첫 확인은 프로펠러를 제거한 상태에서 조종기 스위치와 UART 분리로 진행한다. [Betaflight RC 입력 만료 처리](https://github.com/betaflight/betaflight/blob/2026.6.2/src/main/rx/msp.c)
 
 복사해 온 ArUco, 정밀착륙 컨트롤러, SITL/HITL 전용 파일은 `legacy/precision_landing/`에 참고용으로 보관한다.

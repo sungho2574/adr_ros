@@ -1,4 +1,4 @@
-"""MSP v1 transport and payload decoding for Betaflight telemetry."""
+"""MSP v1 transport for Betaflight telemetry and RC override."""
 from dataclasses import dataclass
 from enum import IntEnum
 import math
@@ -9,12 +9,16 @@ import time
 
 class Command(IntEnum):
     FC_VARIANT = 2
+    FC_VERSION = 3
     BATTERY_CONFIG = 32
+    FEATURE_CONFIG = 36
+    RX_MAP = 64
     STATUS = 101
     RAW_IMU = 102
     ATTITUDE = 108
     BOX_IDS = 119
     BATTERY_STATE = 130
+    SET_RAW_RC = 200
     MULTIPLE_MSP = 230
 
 
@@ -66,6 +70,8 @@ class Client:
         command = Command(command)
         if command is Command.MULTIPLE_MSP:
             raise ValueError('Use read_batch for MSP_MULTIPLE_MSP')
+        if command is Command.SET_RAW_RC:
+            raise ValueError('Use write_rc or release_rc for MSP_SET_RAW_RC')
         return self._request(command, b'')
 
     def read_box_ids(self):
@@ -84,7 +90,7 @@ class Client:
 
     def read_batch(self, *commands):
         commands = tuple(Command(cmd) for cmd in commands)
-        if not commands or Command.MULTIPLE_MSP in commands:
+        if not commands or {Command.MULTIPLE_MSP, Command.SET_RAW_RC}.intersection(commands):
             raise ValueError('Expected a nonempty list of MSP telemetry commands')
         payload = self._request(Command.MULTIPLE_MSP, bytes(commands))
         replies = []
@@ -100,6 +106,17 @@ class Client:
         if offset != len(payload):
             raise ValueError('Unexpected data after MSP_MULTIPLE_MSP replies')
         return replies
+
+    def write_rc(self, channels):
+        self._write_rc(struct.pack('<4H', *channels))
+
+    def release_rc(self):
+        # Betaflight 2026.6+ falls back to the receiver for omitted channels.
+        self._write_rc(b'')
+
+    def _write_rc(self, payload):
+        if self._request(Command.SET_RAW_RC, payload):
+            raise ValueError('Unexpected MSP_SET_RAW_RC reply payload')
 
     def _request(self, command, payload):
         body = bytes((len(payload), command)) + payload
@@ -152,6 +169,14 @@ def decode_imu(raw, attitude):
     return ImuSample((ax, ay, az), angular_velocity, orientation)
 
 
+@dataclass(frozen=True)
+class FlightMode:
+    armed: bool
+    override: bool
+    angle: bool
+    failsafe: bool
+
+
 def decode_flight_mode(payload, box_ids):
     if len(payload) < 16:
         raise ValueError('Truncated MSP_STATUS reply')
@@ -160,10 +185,29 @@ def decode_flight_mode(payload, box_ids):
     if len(payload) < end or len(box_ids) > 8 * (4 + extra_bytes):
         raise ValueError('Truncated MSP_STATUS mode flags')
     modes = int.from_bytes(payload[6:10] + payload[16:end], 'little')
-    # Permanent IDs, not fixed bit positions. MSP packs only boxes enabled on the FC.
-    armed = bool(modes & (1 << box_ids.index(0)))
-    override = 50 in box_ids and bool(modes & (1 << box_ids.index(50)))
-    return armed, override
+    # MSP packs only boxes available on the FC, in the same order as MSP_BOXIDS.
+    def active(box_id):
+        return box_id in box_ids and bool(modes & (1 << box_ids.index(box_id)))
+
+    return FlightMode(armed=active(0), override=active(50), angle=active(1), failsafe=active(27))
+
+
+def check_override_config(client, box_ids):
+    version = client.read(Command.FC_VERSION)
+    if len(version) < 3 or not 1 <= version[1] <= 12 or tuple(version[:3]) < (26, 6, 0):
+        raise ValueError('RC override requires Betaflight 2026.6 or newer for receiver fallback')
+    features = client.read(Command.FEATURE_CONFIG)
+    rx_msp = 1 << 14
+    physical_rx = (1 << 0) | (1 << 3) | (1 << 13) | (1 << 25)  # PPM, serial, PWM, SPI
+    enabled = int.from_bytes(features, 'little')
+    if len(features) != 4 or enabled & rx_msp or not enabled & physical_rx:
+        raise ValueError('RC override requires a physical receiver and feature RX_MSP disabled')
+    rx_map = client.read(Command.RX_MAP)
+    # MSP_RX_MAP stores wire positions in internal roll, pitch, yaw, throttle order.
+    if rx_map[:4] != bytes((0, 1, 3, 2)):
+        raise ValueError('RC override requires the receiver channel map AETR')
+    if box_ids is None or 1 not in box_ids or 50 not in box_ids:
+        raise ValueError('RC override requires ANGLE and MSP OVERRIDE modes')
 
 
 @dataclass(frozen=True)

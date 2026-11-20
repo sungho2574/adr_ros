@@ -210,7 +210,9 @@ class Monitor(Node):
     def flight_status(self, now):
         connected = (self.fc_at is not None and now - self.fc_at <= self.fc_stale_after
                      and self.fc['connected'])
-        mode = flight_mode(self.fc.get('armed'), self.fc.get('msp_override')) if connected else 'NO STATUS'
+        rc_state = self.fc.get('rc_state', 'disabled')
+        auto = self.fc.get('msp_override') if rc_state == 'disabled' else rc_state == 'active'
+        mode = flight_mode(self.fc.get('armed'), auto) if connected else 'NO STATUS'
         fresh_angles = self.attitude_at is not None and now - self.attitude_at <= self.fc_stale_after
         return {'connected': connected, 'mode': mode,
                 'attitude': self.attitude if connected and fresh_angles else None}

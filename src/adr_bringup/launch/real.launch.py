@@ -1,4 +1,4 @@
-"""Real vehicle vision, Betaflight telemetry, HUD streaming and recording."""
+"""Real vehicle vision, Betaflight bridge, optional policy, streaming and recording."""
 from pathlib import Path
 
 import yaml
@@ -21,18 +21,25 @@ def setup(context):
     config_yaml = config_path.read_text(encoding='utf-8')
     config = yaml.safe_load(config_yaml)
     nodes = vision_nodes(config)
-    telemetry = []
-    if LaunchConfiguration('msp').perform(context) == 'true' and 'betaflight' in config:
-        telemetry = [Node(package='adr_betaflight', executable='msp_telemetry', output='screen',
-                          parameters=[config['betaflight']])]
-    stream_url = LaunchConfiguration('stream_url').perform(context).strip()
+    msp = LaunchConfiguration('msp').perform(context) == 'true' and 'betaflight' in config
     bundle = LaunchConfiguration('policy_bundle').perform(context).strip()
+    bench_imu = LaunchConfiguration('policy_bench_imu').perform(context) == 'true'
+    policy_rc = LaunchConfiguration('policy_rc').perform(context) == 'true'
+    if policy_rc and (not msp or bench_imu):
+        raise ValueError('policy_rc requires MSP telemetry and measured IMU (policy_bench_imu:=false)')
+    if bundle == 'b6p53M' or (not bundle and (policy_rc or bench_imu)):
+        bundle = str(Path(get_package_share_directory('adr_control')) / 'policies/b6p53M')
+    telemetry = []
+    if msp:
+        telemetry = [Node(package='adr_betaflight', executable='msp_telemetry', output='screen',
+                          parameters=[dict(config['betaflight'], enable_rc=policy_rc)])]
+    stream_url = LaunchConfiguration('stream_url').perform(context).strip()
     policy = []
     if bundle:
         policy = [Node(
             package='adr_control', executable='policy_node', output='screen',
             parameters=[{'bundle_dir': ParameterValue(bundle, value_type=str),
-                         'bench_imu': LaunchConfiguration('policy_bench_imu').perform(context) == 'true'}])]
+                         'bench_imu': bench_imu, 'enable_rc': policy_rc}])]
     handlers = [RegisterEventHandler(OnProcessExit(
         target_action=node,
         on_exit=[EmitEvent(event=Shutdown(reason='A required process exited'))],
@@ -53,7 +60,9 @@ def generate_launch_description():
         DeclareLaunchArgument('msp', default_value='true', choices=['true', 'false'],
                               description='Read Betaflight telemetry using the UART configured in real.yaml'),
         DeclareLaunchArgument('policy_bundle', default_value='',
-                              description='Deploy bundle directory to enable policy inference'),
+                              description='Use b6p53M or a deploy bundle directory to enable inference'),
+        DeclareLaunchArgument('policy_rc', default_value='false', choices=['true', 'false'],
+                              description='Forward policy actions through Betaflight MSP override'),
         DeclareLaunchArgument('policy_bench_imu', default_value='false', choices=['true', 'false'],
                               description='Use stationary IMU inputs while bench-testing the policy'),
         OpaqueFunction(function=setup),

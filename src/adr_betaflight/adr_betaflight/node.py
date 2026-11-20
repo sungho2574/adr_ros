@@ -1,4 +1,4 @@
-"""Publish Betaflight IMU, battery and FC status via ROS 2."""
+"""Bridge Betaflight telemetry and pilot-authorized RC commands over one UART."""
 import json
 import math
 import time
@@ -12,8 +12,9 @@ import serial
 from sensor_msgs.msg import BatteryState, Imu
 from std_msgs.msg import String
 
-from .msp import (Client, Command, RejectedCommand, decode_battery, decode_battery_config,
-                  decode_flight_mode, decode_imu)
+from .msp import (Client, Command, RejectedCommand, check_override_config, decode_battery,
+                  decode_battery_config, decode_flight_mode, decode_imu)
+from .override import Override
 
 STANDARD_GRAVITY = 9.80665
 LINK_ERRORS = (OSError, ValueError, RejectedCommand)
@@ -29,6 +30,7 @@ class MspTelemetry(Node):
         acc_lsb_per_g = self.declare_parameter('acc_lsb_per_g', 512.0).value
         self.timeout = self.declare_parameter('response_timeout_s', 0.025).value
         self.frame_id = self.declare_parameter('frame_id', 'base_link').value
+        self.enable_rc = self.declare_parameter('enable_rc', False).value
         if not self.device or self.baud <= 0:
             raise ValueError('Set port to the Jetson UART device and baud to the Betaflight MSP speed')
         if any(not math.isfinite(value) or value <= 0
@@ -42,6 +44,8 @@ class MspTelemetry(Node):
         self.client = None
         self.battery_config = None
         self.box_ids = None
+        self.rc_available = False
+        self.override = Override()
         self.next_battery = self.next_status = self.retry_at = 0.0
         self.first_imu = True
 
@@ -49,6 +53,8 @@ class MspTelemetry(Node):
         self.imu_pub = self.create_publisher(Imu, '/adr/telemetry/imu', qos)
         self.battery_pub = self.create_publisher(BatteryState, '/adr/telemetry/battery', qos)
         self.fc_pub = self.create_publisher(String, '/adr/telemetry/fc_status', qos)
+        if self.enable_rc:
+            self.create_subscription(String, '/adr/control/rc_action', self.receive_action, qos)
         self.steady_clock = Clock(clock_type=ClockType.STEADY_TIME)
         self.create_timer(1 / imu_hz, self.tick, clock=self.steady_clock)
         self.get_logger().info(f'Polling {self.device} at {self.baud} baud')
@@ -71,9 +77,19 @@ class MspTelemetry(Node):
             self.box_ids = self.client.read_box_ids()
         except (ValueError, RejectedCommand) as exc:
             self.warn(f'Flight mode IDs unavailable: {exc}')
+        if self.enable_rc:
+            try:
+                check_override_config(self.client, self.box_ids)
+            except (ValueError, RejectedCommand) as exc:
+                self.get_logger().error(f'MSP RC disabled: {exc}')
+            else:
+                self.rc_available = True
         self.next_battery = self.next_status = 0.0
         self.first_imu = True
         self.get_logger().info('Betaflight MSP connected')
+
+    def receive_action(self, msg):
+        self.override.receive(msg.data, time.monotonic_ns())
 
     def tick(self):
         now = time.monotonic()
@@ -88,14 +104,27 @@ class MspTelemetry(Node):
             commands = [Command.RAW_IMU, Command.ATTITUDE]
             if poll_battery:
                 commands.append(Command.BATTERY_STATE)
-            if poll_status and self.box_ids is not None:
+            if (poll_status or self.rc_available) and self.box_ids is not None:
                 commands.append(Command.STATUS)
             replies = dict(zip(commands, self.client.read_batch(*commands)))
             stamp = self.get_clock().now().to_msg()
             self.publish_imu(decode_imu(replies[Command.RAW_IMU], replies[Command.ATTITUDE]), stamp)
-            if poll_status:
+            mode = None
+            if Command.STATUS in replies:
+                try:
+                    mode = decode_flight_mode(replies[Command.STATUS], self.box_ids)
+                except ValueError as exc:
+                    if self.rc_available:
+                        raise
+                    self.warn(str(exc))
+            previous_rc = self.override.state
+            if self.rc_available:
+                self.override.tick(self.client, mode, time.monotonic_ns())
+            if poll_status or previous_rc != self.override.state:
                 self.next_status = now + 0.1
-                self.publish_flight_mode(replies.get(Command.STATUS))
+                self.publish_fc_status(True, mode)
+            if previous_rc != self.override.state and self.override.state == 'restart_required':
+                self.get_logger().error('Policy RC stopped. Return to manual and restart on the ground.')
             if poll_battery:
                 self.next_battery = now + self.battery_period
                 try:
@@ -105,23 +134,27 @@ class MspTelemetry(Node):
                 else:
                     self.publish_battery(sample, stamp)
         except LINK_ERRORS as exc:
+            self.override.link_lost()
             self.disconnect()
             self.publish_fc_status(False)
             self.retry_at = time.monotonic() + 1.0
             self.warn(f'MSP link {self.device}: {exc}')
 
-    def publish_flight_mode(self, payload):
-        armed = override = None
-        if payload is not None:
-            try:
-                armed, override = decode_flight_mode(payload, self.box_ids)
-            except ValueError as exc:
-                self.warn(str(exc))
-        self.publish_fc_status(True, armed, override)
-
-    def publish_fc_status(self, connected, armed=None, msp_override=None):
+    def publish_fc_status(self, connected, mode=None):
+        rc_state = 'disabled'
+        if self.enable_rc:
+            if self.rc_available or self.override.state == 'restart_required':
+                rc_state = self.override.state
+            else:
+                rc_state = 'unavailable'
         self.fc_pub.publish(String(data=json.dumps({
-            'connected': connected, 'armed': armed, 'msp_override': msp_override,
+            'connected': connected,
+            'armed': mode.armed if mode is not None else None,
+            'msp_override': mode.override if mode is not None else None,
+            'angle': mode.angle if mode is not None else None,
+            'rc_session': self.override.session,
+            'rc_state': rc_state,
+            'stamp_ns': time.monotonic_ns(),
         })))
 
     def publish_imu(self, sample, stamp):
@@ -157,6 +190,7 @@ class MspTelemetry(Node):
 
     def disconnect(self):
         client, self.client = self.client, None
+        self.rc_available = False
         if client is not None:
             try:
                 client.port.close()
@@ -174,6 +208,11 @@ def main(args=None):
         pass
     finally:
         if node is not None:
+            if node.rc_available and node.override.session is not None:
+                try:
+                    node.client.release_rc()
+                except LINK_ERRORS as exc:
+                    node.warn(f'Error releasing MSP override: {exc}')
             node.disconnect()
             node.destroy_node()
         rclpy.try_shutdown()
