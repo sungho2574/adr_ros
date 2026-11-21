@@ -57,6 +57,8 @@ class Override:
             self.stop('waiting_for_disarm')
 
     def tick(self, client, mode, now_ns):
+        if mode.override is False:
+            client.prepare_manual_rc()
         if self.state == 'restart_required':
             return
         if self.session is None:

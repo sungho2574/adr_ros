@@ -151,10 +151,12 @@ ros2 launch adr_bringup real.launch.py
 ros2 topic echo /adr/telemetry/fc_status --qos-reliability best_effort
 ```
 
-실기체 런치는 기본으로 `policy_rc`를 켜고 설치된 `b6p53M`을 쓴다. `adr_betaflight`는 FC가 Betaflight 2026.6 이상, 물리 수신기, AETR 맵과 ANGLE·MSP OVERRIDE 모드를 보고할 때 RC 경로를 연다. 텔레메트리와 영상만 보려면 `policy_rc:=false`를 지정한다. `msp:=false` 또는 `policy_bench_imu:=true`를 지정하면 `policy_rc` 기본값도 `false`가 된다.
+실기체 런치는 기본으로 `policy_rc`를 켜고 설치된 `b6p53M`을 쓴다. Betaflight 4.4.3에서도 물리 수신기, AETR 맵과 ANGLE·MSP OVERRIDE 모드가 설정돼 있으면 RC 경로를 연다. 텔레메트리와 영상만 보려면 `policy_rc:=false`를 지정한다. `msp:=false` 또는 `policy_bench_imu:=true`를 지정하면 `policy_rc` 기본값도 `false`가 된다.
 
-FC 설정에서 `msp_override_channels_mask = 15`, `msp_override_failsafe = OFF`, `angle_limit = 55`, yaw 최대 스틱 각속도 약 229°/s를 확인한다. ARM과 MSP OVERRIDE는 물리 조종기의 AUX 스위치에 매핑한다. 100 Hz마다 텔레메트리 조회와 RC 쓰기가 각각 한 번씩 이뤄지므로 `serial_update_rate_hz = 500`에서 시작해 Jetson에서 IMU 및 정책 발행률을 측정한다. ROS 토픽 조회는 `real.yaml`과 같은 `ROS_DOMAIN_ID`에서 실행한다. [Betaflight MSP OVERRIDE](https://betaflight.com/docs/wiki/guides/current/MSP-Companion-Computer-Control)
+FC 설정에서 `msp_override_channels_mask = 15`, `angle_limit = 55`, yaw 최대 스틱 각속도 약 229°/s를 확인한다. `msp_override_failsafe`가 있는 펌웨어에서는 `OFF`를 사용한다. ARM과 MSP OVERRIDE는 물리 조종기의 AUX 스위치에 매핑한다. 100 Hz마다 텔레메트리 조회와 RC 쓰기가 각각 한 번씩 이뤄지므로 `serial_update_rate_hz = 500`에서 시작해 Jetson에서 IMU 및 정책 발행률을 측정한다. ROS 토픽 조회는 `real.yaml`과 같은 `ROS_DOMAIN_ID`에서 실행한다. [Betaflight MSP OVERRIDE](https://betaflight.com/docs/wiki/guides/current/MSP-Companion-Computer-Control)
 
-지상에서 DISARM·OVERRIDE OFF 상태로 런치한 뒤, ARM·ANGLE 상태에서 조종자가 OVERRIDE를 켜면 정책 메모리와 게이트 순서를 G1부터 시작한다. 정상 인계가 이뤄지면 `fc_status.rc_state`가 `active`가 된다. 조종자가 스위치를 끄면 수동으로 돌아가며, 다음 인계는 다시 DISARM·OVERRIDE OFF를 거쳐야 한다. 마스크나 IMU가 만료되면 정책 발행이 멈추고, 새 액션이 50 ms 동안 도착하지 않으면 MSP 브리지가 수신기로 제어권을 넘긴다. UART 자체가 끊기면 FC가 마지막 MSP 프레임에서 약 300 ms 뒤 수신기로 복귀한다. 이 경우 지상에서 수동 복귀와 DISARM을 확인한 뒤 런치를 다시 시작한다. 첫 확인은 프로펠러를 제거한 상태에서 조종기 스위치와 UART 분리로 진행한다. [Betaflight RC 입력 만료 처리](https://github.com/betaflight/betaflight/blob/2026.6.2/src/main/rx/msp.c)
+지상에서 DISARM·OVERRIDE OFF 상태로 런치한 뒤, ARM·ANGLE 상태에서 조종자가 OVERRIDE를 켜면 정책 메모리와 게이트 순서를 G1부터 시작한다. 정상 인계가 이뤄지면 `fc_status.rc_state`가 `active`가 된다. 조종자가 스위치를 끄면 수동으로 돌아가며, 다음 인계는 다시 DISARM·OVERRIDE OFF를 거쳐야 한다. 입력이 만료되면 정책 발행이 멈추고, 새 액션이 50 ms 동안 도착하지 않으면 브리지는 정책 명령을 멈춘다. 입력 또는 UART 손실 뒤에는 수동 복귀와 DISARM을 확인하고 지상에서 런치를 다시 시작한다.
+
+Betaflight 4.4.3에서는 OVERRIDE OFF일 때 중립 스틱과 최저 스로틀을 미리 전송해 FC에 저장된 MSP 스틱값을 대체한다. 입력이나 UART가 끊기면 OVERRIDE를 끌 때까지 FC가 마지막 스틱값을 적용할 수 있다. 2026.6 이상에서는 빈 RC 프레임으로 즉시 수신기로 넘길 수 있고, UART 자체가 끊겼을 때도 마지막 RC 프레임에서 약 300 ms 뒤 자동 복귀한다. 첫 확인은 프로펠러를 제거한 상태에서 조종기 스위치와 UART 분리로 진행한다. [4.4.3 OVERRIDE](https://github.com/betaflight/betaflight/blob/4.4.3/src/main/rx/msp_override.c#L27-L38) · [2026.6 RC 입력 만료](https://github.com/betaflight/betaflight/blob/2026.6.2/src/main/rx/msp.c#L56-L81)
 
 복사해 온 ArUco, 정밀착륙 컨트롤러, SITL/HITL 전용 파일은 `legacy/precision_landing/`에 참고용으로 보관한다.

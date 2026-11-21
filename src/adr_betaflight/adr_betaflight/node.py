@@ -90,6 +90,7 @@ class MspTelemetry(Node):
         self.fc_version = None
         try:
             self.fc_version = decode_fc_version(self.client.read(Command.FC_VERSION))
+            self.client.rc_frame_expiry = self.fc_version >= (2026, 6, 0)
         except (ValueError, RejectedCommand, TimeoutError) as exc:
             self.warn(f'Betaflight version unavailable: {exc}')
 
@@ -105,11 +106,13 @@ class MspTelemetry(Node):
             self.warn(f'Flight mode IDs unavailable: {exc}')
         if self.enable_rc:
             try:
-                check_override_config(self.client, self.box_ids, self.fc_version)
+                check_override_config(self.client, self.box_ids)
             except (ValueError, RejectedCommand) as exc:
                 self.get_logger().error(f'MSP RC disabled: {exc}')
             else:
                 self.rc_available = True
+                if not self.client.rc_frame_expiry:
+                    self.get_logger().info('MSP RC enabled with pilot takeover on link or input loss')
         self.next_battery = self.next_status = self.next_rc = 0.0
         self.first_imu = True
         self.get_logger().info('Betaflight MSP connected')

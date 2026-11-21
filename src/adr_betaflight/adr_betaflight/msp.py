@@ -66,6 +66,8 @@ class Client:
     def __init__(self, port, timeout):
         self.port = port
         self.timeout = timeout
+        self.rc_frame_expiry = False
+        self._needs_idle_rc = True
 
     def read(self, command):
         command = Command(command)
@@ -109,11 +111,19 @@ class Client:
         return replies
 
     def write_rc(self, channels):
+        self._needs_idle_rc = True
         self._write_rc(struct.pack('<4H', *channels))
 
+    def prepare_manual_rc(self):
+        """Seed valid idle inputs for legacy firmware while the receiver is in control."""
+        if not self.rc_frame_expiry and self._needs_idle_rc:
+            self.write_rc((1500, 1500, 1000, 1500))
+            self._needs_idle_rc = False
+
     def release_rc(self):
-        # Betaflight 2026.6+ falls back to the receiver for omitted channels.
-        self._write_rc(b'')
+        # Legacy Betaflight substitutes zeros for omitted channels.
+        if self.rc_frame_expiry:
+            self._write_rc(b'')
 
     def _write_rc(self, payload):
         if self._request(Command.SET_RAW_RC, payload):
@@ -260,9 +270,7 @@ def decode_flight_mode(payload, box_ids, version=None):
                       arming_disable_mask=mask, arming_disable_flags=flags)
 
 
-def check_override_config(client, box_ids, version):
-    if version is None or version < (2026, 6, 0):
-        raise ValueError('RC override requires Betaflight 2026.6 or newer for receiver fallback')
+def check_override_config(client, box_ids):
     features = client.read(Command.FEATURE_CONFIG)
     rx_msp = 1 << 14
     physical_rx = (1 << 0) | (1 << 3) | (1 << 13) | (1 << 25)  # PPM, serial, PWM, SPI
