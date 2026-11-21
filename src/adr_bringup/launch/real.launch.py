@@ -22,7 +22,6 @@ def setup(context):
     config = yaml.safe_load(config_yaml)
     if LaunchConfiguration('auto_exposure').perform(context) == 'true':
         enable_auto_exposure(config)
-        config_yaml = yaml.safe_dump(config, sort_keys=False)
     nodes = vision_nodes(config)
     msp = LaunchConfiguration('msp').perform(context) == 'true' and 'betaflight' in config
     bundle = LaunchConfiguration('policy_bundle').perform(context).strip()
@@ -34,6 +33,12 @@ def setup(context):
         bundle = str(Path(get_package_share_directory('adr_control')) / 'policies/b6p53M')
     telemetry = []
     if msp:
+        msp_port = LaunchConfiguration('msp_port').perform(context)
+        msp_baud = LaunchConfiguration('msp_baud').perform(context)
+        if msp_port:
+            config['betaflight']['port'] = msp_port
+        if msp_baud:
+            config['betaflight']['baud'] = int(msp_baud)
         telemetry = [Node(package='adr_betaflight', executable='msp_telemetry', output='screen',
                           parameters=[dict(config['betaflight'], enable_rc=policy_rc)])]
     stream_url = LaunchConfiguration('stream_url').perform(context).strip()
@@ -48,7 +53,7 @@ def setup(context):
         on_exit=[EmitEvent(event=Shutdown(reason='A required process exited'))],
     )) for node in nodes]
     return [SetEnvironmentVariable('ROS_DOMAIN_ID', str(config.get('ros_domain_id', 0))),
-            *handlers, *nodes, *telemetry, *policy, recorder('real', config_yaml=config_yaml),
+            *handlers, *nodes, *telemetry, *policy, recorder('real', config_yaml=yaml.safe_dump(config, sort_keys=False)),
             *streaming_actions(stream_url)]
 
 
@@ -64,6 +69,10 @@ def generate_launch_description():
                                           'and an empty value disables streaming'),
         DeclareLaunchArgument('msp', default_value='true', choices=['true', 'false'],
                               description='Read Betaflight telemetry using the UART configured in real.yaml'),
+        DeclareLaunchArgument('msp_port', default_value='',
+                              description='Override betaflight.port from the config'),
+        DeclareLaunchArgument('msp_baud', default_value='',
+                              description='Override betaflight.baud from the config'),
         DeclareLaunchArgument('policy_bundle', default_value='',
                               description='Use b6p53M or a deploy bundle directory. An empty value '
                                           'uses b6p53M when policy RC or bench IMU is enabled'),
