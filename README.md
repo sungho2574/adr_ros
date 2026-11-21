@@ -30,22 +30,47 @@ ros2 launch adr_bringup real.launch.py
 
 ## 영상 송출 스모크 테스트
 
-카메라, GateNet, HUD와 RTSP 송출만 점검한다.
+### 카메라 단독
+
+카메라, GateNet, HUD와 RTSP 송출을 점검한다. 아래 FC 런치 예시의 환경 설정을 먼저 적용한다.
 
 ```bash
 ros2 launch adr_bringup smoke_test.launch.py
 ```
 
-기본 카메라 모드는 실기체와 같은 mode 3이며, 두 스모크 테스트 모두 기본으로 8.33 ms 고정 노출을 사용한다. Argus 자동 노출과 게인을 쓰려면 `auto_exposure:=true`를 지정한다.
+기본 카메라 모드는 실기체와 같은 mode 3이며, 두 스모크 테스트 모두 기본으로 Argus 자동 노출과 게인을 사용한다. 8.33 ms 고정 노출을 쓰려면 `auto_exposure:=false`를 지정한다.
 
 실기체 설정으로 카메라, GateNet, HUD, 스트리머를 띄우고 rosbag을 기록한다. 녹화는 `record:=false`로 끄거나 `log_dir:=...`로 저장 경로를 바꿀 수 있다. Flight Analyzer 목록에는 스모크 기록이 `SMOKE`로 표시된다.
 
 기본 송출은 로컬 MediaMTX를 사용한다. 다른 기기에서 `http://JETSON_IP:8889/hud` 또는 `rtsp://JETSON_IP:8554/hud`로 확인할 수 있다. 기존 RTSP 서버를 쓰려면 `stream_url:=rtsp://HOST:8554/hud`를 지정한다.
 
-카메라 파이프라인과 Betaflight UART 텔레메트리를 함께 점검하려면 아래 런치를 사용한다. HUD에서 FC 연결 상태와 자세를 확인할 수 있다.
+### 카메라와 FC 연결
+
+카메라 파이프라인과 Betaflight UART 텔레메트리를 함께 점검한다. HUD에서 FC 연결 상태와 자세를 확인할 수 있다.
+
+젯슨의 새 터미널에서 아래 블록을 실행한다. 워크스페이스에 설치한 MediaMTX·GStreamer 플러그인과 `~/gatenet_ws`의 PyCUDA를 사용한다.
 
 ```bash
-ros2 launch adr_bringup fc_smoke_test.launch.py
+cd /home/inair/Workspace/adr_ros
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+export ADR_ROOT="$PWD"
+gst_lib="$PWD/.deps/smoke/gst/usr/lib/aarch64-linux-gnu"
+export LD_LIBRARY_PATH="$gst_lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export GST_PLUGIN_PATH="$gst_lib/gstreamer-1.0${GST_PLUGIN_PATH:+:$GST_PLUGIN_PATH}"
+export PYTHONPATH="$HOME/gatenet_ws/.venv/lib/python3.10/site-packages${PYTHONPATH:+:$PYTHONPATH}"
+export MTX_WEBRTC=no MTX_MOQ=no
+
+ros2 launch adr_bringup smoke_test.launch.py auto_exposure:=true
+```
+
+이 명령으로 실행하면 VLC에서 `rtsp://JETSON_IP:8554/hud`를 연다.
+
+FC 텔레메트리까지 점검하려면 위 환경 설정 후 아래 명령을 실행한다. `msp_port`에는 사용할 시리얼 장치 경로를 넣는다. `msp_baud`에는 통신 속도를 넣는다. 각 옵션을 생략하면 설정 파일의 해당 값을 사용한다.
+
+```bash
+ros2 launch adr_bringup fc_smoke_test.launch.py auto_exposure:=true msp_port:=/dev/ttyTHS1 msp_baud:=115200
 ```
 
 ## Betaflight UART 텔레메트리
