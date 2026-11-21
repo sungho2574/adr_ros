@@ -19,3 +19,6 @@ __pycache__/
 # TensorRT engines are built on the target Jetson
 *.plan
 *.engine
+
+
+venv
