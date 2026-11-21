@@ -201,16 +201,26 @@ def _encode_hud(ffmpeg: str, data: dict, directory: Path) -> Path:
         lines.extend((f"file {name}", "option framerate 1000", f"duration {(end - tick) / 1000:.3f}"))
     # concat uses the following frame timestamp to establish the last hold.
     lines.extend((f"file {name}", "option framerate 1000"))
-    (directory / "frames.ffconcat").write_text("\n".join(lines) + "\n")
+    manifest = directory / "frames.ffconcat"
+    manifest.write_text("\n".join(lines) + "\n")
     output = directory / "hud.mp4"
-    subprocess.run([
+    command = [
         ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error",
         "-f", "concat", "-safe", "0", "-i", "frames.ffconcat",
         "-an", "-vsync", "vfr", "-enc_time_base", "1:1000",
         "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2",
         "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
         "-movflags", "+faststart", output.name,
-    ], cwd=directory, check=True, capture_output=True)
+    ]
+    try:
+        subprocess.run(command, cwd=directory, check=True, capture_output=True)
+    except subprocess.CalledProcessError as error:
+        if b"unknown keyword 'option'" not in error.stderr:
+            raise
+        # Older concat demuxers use the image demuxer's default time base.
+        manifest.write_text("\n".join(line for line in lines
+                                      if line != "option framerate 1000") + "\n")
+        subprocess.run(command, cwd=directory, check=True, capture_output=True)
     return output
 
 
