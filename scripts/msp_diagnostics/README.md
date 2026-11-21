@@ -21,6 +21,14 @@ logs=flight_logs/msp_diagnostics/$(date +%Y%m%d-%H%M%S)
 
 먼저 5 Hz `FC_VARIANT`를 현재 baud에서 실행한다. 115200과 500000을 비교할 때는 FC 설정을 저장하고 양쪽 baud를 함께 바꾼 상태에서 같은 테스트를 반복한다.
 
+FC가 이미 500000 baud라면 아래 한 줄로 `/dev/ttyTHS1`에서 3분간 기준 테스트를 실행한다.
+
+```bash
+./scripts/msp_diagnostics/probe_500000.sh
+```
+
+baud를 바꿔 비교하거나 경로와 FC 시리얼 주기까지 함께 지정하려면 Python 명령을 사용한다.
+
 ```bash
 python3 "$diag" probe --baud "$baud" --fc-serial-hz "$fc_serial_hz" \
   --profile variant --hz 5 --seconds 180 --out "$logs/variant-$baud"
