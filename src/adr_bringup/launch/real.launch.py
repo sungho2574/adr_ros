@@ -8,7 +8,7 @@ from launch.actions import (DeclareLaunchArgument, OpaqueFunction, RegisterEvent
                             EmitEvent, SetEnvironmentVariable)
 from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import AndSubstitution, LaunchConfiguration, NotSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from adr_bringup.recording import recorder, recording_arguments
@@ -57,7 +57,7 @@ def generate_launch_description():
         *recording_arguments(),
         DeclareLaunchArgument('config', default_value=str(
             Path(get_package_share_directory('adr_bringup')) / 'config/real.yaml')),
-        DeclareLaunchArgument('auto_exposure', default_value='false', choices=['true', 'false'],
+        DeclareLaunchArgument('auto_exposure', default_value='true', choices=['true', 'false'],
                               description='Use Argus auto exposure and gain'),
         DeclareLaunchArgument('stream_url', default_value='local',
                               description='local starts MediaMTX, an RTSP URL uses an existing server, '
@@ -65,10 +65,15 @@ def generate_launch_description():
         DeclareLaunchArgument('msp', default_value='true', choices=['true', 'false'],
                               description='Read Betaflight telemetry using the UART configured in real.yaml'),
         DeclareLaunchArgument('policy_bundle', default_value='',
-                              description='Use b6p53M or a deploy bundle directory to enable inference'),
-        DeclareLaunchArgument('policy_rc', default_value='false', choices=['true', 'false'],
-                              description='Forward policy actions through Betaflight MSP override'),
+                              description='Use b6p53M or a deploy bundle directory. An empty value '
+                                          'uses b6p53M when policy RC or bench IMU is enabled'),
         DeclareLaunchArgument('policy_bench_imu', default_value='false', choices=['true', 'false'],
                               description='Use stationary IMU inputs while bench-testing the policy'),
+        DeclareLaunchArgument(
+            'policy_rc', choices=['true', 'false'],
+            default_value=AndSubstitution(
+                LaunchConfiguration('msp'), NotSubstitution(LaunchConfiguration('policy_bench_imu'))),
+            description='Forward policy actions through Betaflight MSP override. Enabled by '
+                        'default when MSP is enabled and bench IMU is disabled'),
         OpaqueFunction(function=setup),
     ])

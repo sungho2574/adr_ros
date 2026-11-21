@@ -13,7 +13,7 @@ from sensor_msgs.msg import BatteryState, Imu
 from std_msgs.msg import String
 
 from .msp import (Client, Command, RejectedCommand, check_override_config, decode_battery,
-                  decode_battery_config, decode_flight_mode, decode_imu, decode_rc)
+                  decode_battery_config, decode_fc_version, decode_flight_mode, decode_imu, decode_rc)
 from .override import Override
 
 STANDARD_GRAVITY = 9.80665
@@ -57,6 +57,7 @@ class MspTelemetry(Node):
         self.battery_period = 1 / battery_hz
         self.rc_period = 1 / rc_hz if rc_hz else None
         self.client = None
+        self.fc_version = None
         self.battery_config = None
         self.box_ids = None
         self.rc_available = False
@@ -64,6 +65,7 @@ class MspTelemetry(Node):
         self.next_battery = self.next_status = self.retry_at = 0.0
         self.next_rc = 0.0
         self.first_imu = True
+        self.last_arming_disable_mask = None
 
         qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
         self.imu_pub = self.create_publisher(Imu, '/adr/telemetry/imu', qos)
@@ -85,6 +87,12 @@ class MspTelemetry(Node):
         if self.client.read(Command.FC_VARIANT) != b'BTFL':
             raise ValueError('MSP device did not identify itself as Betaflight')
 
+        self.fc_version = None
+        try:
+            self.fc_version = decode_fc_version(self.client.read(Command.FC_VERSION))
+        except (ValueError, RejectedCommand, TimeoutError) as exc:
+            self.warn(f'Betaflight version unavailable: {exc}')
+
         self.battery_config = None
         try:
             self.battery_config = decode_battery_config(self.client.read(Command.BATTERY_CONFIG))
@@ -97,7 +105,7 @@ class MspTelemetry(Node):
             self.warn(f'Flight mode IDs unavailable: {exc}')
         if self.enable_rc:
             try:
-                check_override_config(self.client, self.box_ids)
+                check_override_config(self.client, self.box_ids, self.fc_version)
             except (ValueError, RejectedCommand) as exc:
                 self.get_logger().error(f'MSP RC disabled: {exc}')
             else:
@@ -123,7 +131,7 @@ class MspTelemetry(Node):
             commands = [Command.RAW_IMU, Command.ATTITUDE]
             if poll_battery:
                 commands.append(Command.BATTERY_STATE)
-            if (poll_status or poll_rc or self.rc_available) and self.box_ids is not None:
+            if poll_status or poll_rc or self.rc_available:
                 commands.append(Command.STATUS)
             if poll_rc:
                 commands.append(Command.RC)
@@ -133,7 +141,7 @@ class MspTelemetry(Node):
             mode = None
             if Command.STATUS in replies:
                 try:
-                    mode = decode_flight_mode(replies[Command.STATUS], self.box_ids)
+                    mode = decode_flight_mode(replies[Command.STATUS], self.box_ids, self.fc_version)
                 except ValueError as exc:
                     if self.rc_available:
                         raise
@@ -141,7 +149,8 @@ class MspTelemetry(Node):
             previous_rc = self.override.state
             if self.rc_available:
                 self.override.tick(self.client, mode, time.monotonic_ns())
-            if poll_status or previous_rc != self.override.state:
+            arming_changed = mode is not None and mode.arming_disable_mask != self.last_arming_disable_mask
+            if poll_status or arming_changed or previous_rc != self.override.state:
                 self.next_status = now + 0.1
                 self.publish_fc_status(True, mode)
             if previous_rc != self.override.state and self.override.state == 'restart_required':
@@ -178,9 +187,14 @@ class MspTelemetry(Node):
                 rc_state = self.override.state
             else:
                 rc_state = 'unavailable'
+        version = '.'.join(map(str, self.fc_version)) if connected and self.fc_version else None
+        self.last_arming_disable_mask = mode.arming_disable_mask if mode is not None else None
         self.fc_pub.publish(String(data=json.dumps({
             'connected': connected,
+            'fc_version': version,
             **mode_status(mode),
+            'arming_disable_flags': mode.arming_disable_flags if mode is not None else None,
+            'arming_disable_mask': self.last_arming_disable_mask,
             'rc_session': self.override.session,
             'rc_state': rc_state,
             'stamp_ns': time.monotonic_ns(),

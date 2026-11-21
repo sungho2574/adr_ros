@@ -177,40 +177,91 @@ def decode_rc(payload):
     return struct.unpack(f'<{len(payload) // 2}H', payload)
 
 
+def decode_fc_version(payload):
+    if len(payload) < 3:
+        raise ValueError('Truncated Betaflight FC_VERSION reply')
+    major, minor, patch = payload[:3]
+    if major >= 25:
+        if not 1 <= minor <= 12:
+            raise ValueError('Invalid Betaflight FC_VERSION month')
+        major += 2000
+    return major, minor, patch
+
+
+# CLI names in bit order from Betaflight's src/main/fc/runtime_config.c.
+_ARMING_FLAGS_4_5 = (
+    'NOGYRO', 'FAILSAFE', 'RXLOSS', 'NOT_DISARMED', 'BOXFAILSAFE', 'RUNAWAY',
+    'CRASH', 'THROTTLE', 'ANGLE', 'BOOTGRACE', 'NOPREARM', 'LOAD', 'CALIB', 'CLI',
+    'CMS', 'BST', 'MSP', 'PARALYZE', 'GPS', 'RESCUE_SW', 'DSHOT_TELEM',
+    'REBOOT_REQD', 'DSHOT_BBANG', 'NO_ACC_CAL', 'MOTOR_PROTO', 'ARMSWITCH',
+)
+_ARMING_FLAGS_4_3_TO_4_4 = (
+    *_ARMING_FLAGS_4_5[:3], 'BADRX', *_ARMING_FLAGS_4_5[4:20], 'RPMFILTER',
+    *_ARMING_FLAGS_4_5[21:],
+)
+_ARMING_FLAGS_2025 = (*_ARMING_FLAGS_4_5[:-1], 'FLIP_SWITCH', 'ALT_HOLD_SW',
+                      'POS_HOLD_SW', 'ARM_SWITCH')
+_ARMING_FLAGS_2026 = (*_ARMING_FLAGS_2025[:-1], 'AUTOPILOT_SW', 'ARM_SWITCH')
+_ARMING_FLAGS_BY_VERSION = {
+    (4, 3): _ARMING_FLAGS_4_3_TO_4_4,
+    (4, 4): _ARMING_FLAGS_4_3_TO_4_4,
+    (4, 5): _ARMING_FLAGS_4_5,
+    (2025, 12): _ARMING_FLAGS_2025,
+    (2026, 6): _ARMING_FLAGS_2026,
+    (2026, 12): _ARMING_FLAGS_2026,
+}
+
+
+def arming_disable_names(mask, count, version):
+    names = _ARMING_FLAGS_BY_VERSION.get(version[:2], ()) if version is not None else ()
+    if len(names) != count:
+        names = ()
+    return tuple(names[bit] if bit < len(names) else f'BIT_{bit}'
+                 for bit in range(mask.bit_length()) if mask & (1 << bit))
+
+
 @dataclass(frozen=True)
 class FlightMode:
-    armed: bool
-    override: bool
-    angle: bool
-    failsafe: bool
+    armed: bool | None
+    override: bool | None
+    angle: bool | None
+    failsafe: bool | None
     rx_loss: bool | None = None
     failsafe_switch: bool | None = None
+    arming_disable_mask: int | None = None
+    arming_disable_flags: tuple[str, ...] | None = None
 
 
-def decode_flight_mode(payload, box_ids):
+def decode_flight_mode(payload, box_ids, version=None):
     if len(payload) < 16:
         raise ValueError('Truncated MSP_STATUS reply')
     extra_bytes = payload[15] & 0x0F
     end = 16 + extra_bytes
-    if len(payload) < end or len(box_ids) > 8 * (4 + extra_bytes):
+    if len(payload) < end or (box_ids is not None and len(box_ids) > 8 * (4 + extra_bytes)):
         raise ValueError('Truncated MSP_STATUS mode flags')
     modes = int.from_bytes(payload[6:10] + payload[16:end], 'little')
     # MSP packs only boxes available on the FC, in the same order as MSP_BOXIDS.
     def active(box_id):
+        if box_ids is None:
+            return None
         return box_id in box_ids and bool(modes & (1 << box_ids.index(box_id)))
 
     rx_loss = failsafe_switch = None
-    if len(payload) >= end + 5 and payload[end] >= 5:
-        arming_flags, = struct.unpack_from('<I', payload, end + 1)
-        rx_loss = bool(arming_flags & (1 << 2))
-        failsafe_switch = bool(arming_flags & (1 << 4))
+    mask = flags = None
+    if len(payload) >= end + 5:
+        count = payload[end]
+        mask, = struct.unpack_from('<I', payload, end + 1)
+        flags = arming_disable_names(mask, count, version)
+        if count >= 5:
+            rx_loss = bool(mask & (1 << 2))
+            failsafe_switch = bool(mask & (1 << 4))
     return FlightMode(armed=active(0), override=active(50), angle=active(1), failsafe=active(27),
-                      rx_loss=rx_loss, failsafe_switch=failsafe_switch)
+                      rx_loss=rx_loss, failsafe_switch=failsafe_switch,
+                      arming_disable_mask=mask, arming_disable_flags=flags)
 
 
-def check_override_config(client, box_ids):
-    version = client.read(Command.FC_VERSION)
-    if len(version) < 3 or not 1 <= version[1] <= 12 or tuple(version[:3]) < (26, 6, 0):
+def check_override_config(client, box_ids, version):
+    if version is None or version < (2026, 6, 0):
         raise ValueError('RC override requires Betaflight 2026.6 or newer for receiver fallback')
     features = client.read(Command.FEATURE_CONFIG)
     rx_msp = 1 << 14

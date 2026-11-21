@@ -21,7 +21,7 @@ Install MediaMTX on the Jetson. The real launch looks for `mediamtx` on
 `PATH` or under `$ADR_ROOT/.deps/hud/mediamtx`. From the repository root:
 
 ```bash
-ros2 launch adr_bringup real.launch.py
+ros2 launch adr_bringup real.launch.py policy_rc:=false
 ```
 
 The launch starts MediaMTX with the packaged configuration and publishes
@@ -30,7 +30,7 @@ the launch. To disable streaming for a run, pass `stream_url:=`.
 If a MediaMTX server is already running, supply its RTSP publish URL:
 
 ```bash
-ros2 launch adr_bringup real.launch.py stream_url:=rtsp://127.0.0.1:8554/hud
+ros2 launch adr_bringup real.launch.py policy_rc:=false stream_url:=rtsp://127.0.0.1:8554/hud
 ```
 
 On the ground station, open `http://JETSON_LAN_IP:8889/hud` in a browser

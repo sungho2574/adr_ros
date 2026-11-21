@@ -26,7 +26,7 @@ ros2 launch adr_bringup camera_test.launch.py view:=false
 ros2 launch adr_bringup real.launch.py
 ```
 
-기본 파라미터는 [real.yaml](src/adr_bringup/config/real.yaml)에 있다. `config:=/path/to/real.yaml`로 덮어쓸 수 있다. IMX219은 mode 3, 1640×1232, 30 fps다. 카메라 노드에서 320×240 BGR로 하드웨어 축소한 다음 발행한다. 고정 노출은 8.33 ms이며 아날로그/ISP 게인은 1이다. `real.launch.py auto_exposure:=true`는 Argus 자동 노출과 게인을 사용한다.
+기본 파라미터는 [real.yaml](src/adr_bringup/config/real.yaml)에 있다. `config:=/path/to/real.yaml`로 덮어쓸 수 있다. IMX219은 mode 3, 1640×1232, 30 fps다. 카메라 노드에서 320×240 BGR로 하드웨어 축소한 다음 발행한다. 실기체 런치는 기본으로 Argus 자동 노출과 게인을 사용한다. `auto_exposure:=false`를 지정하면 YAML의 노출·게인 설정을 사용한다. 기본 YAML의 고정 노출은 8.33 ms이며 아날로그/ISP 게인은 1이다.
 
 ## 영상 송출 스모크 테스트
 
@@ -82,10 +82,12 @@ IMU와 자세는 하나의 MSP 요청으로 묶어 **100 Hz**를 목표로 발�
 | `/adr/perception/latency_ms` | 카메라 타임스탬프에서 마스크 발행 직전까지 걸린 시간 |
 | `/adr/telemetry/imu` | Betaflight 각속도·가속도·자세를 담은 `sensor_msgs/Imu` |
 | `/adr/telemetry/battery` | 전압, 전류와 추정 잔량을 담은 `sensor_msgs/BatteryState` |
-| `/adr/telemetry/fc_status` | MSP 연결, ARM, MSP OVERRIDE, failsafe 모드와 수신기 손실·FAILSAFE 스위치 플래그 |
+| `/adr/telemetry/fc_status` | MSP 연결, FC 버전, ARM, MSP OVERRIDE, failsafe, 수신기 손실·FAILSAFE 스위치 플래그, ARM 차단 사유 목록과 비트마스크 |
 | `/adr/telemetry/rc` | `std_msgs/String` JSON의 `roll_us`, `pitch_us`, `yaw_us`, `throttle_us`, `aux_us`(AUX1부터 순서대로), `armed`, `msp_override`, `failsafe`, `rx_loss`, `failsafe_switch` |
 | `/adr/monitor/image`, `/adr/monitor/image/compressed` | GateNet 마스크와 하단 배터리 전압·잔량을 표시한 320×240 HUD |
 | `/adr/monitor/status` | 배터리 값과 수신 상태 |
+
+`fc_status.arming_disable_flags`는 활성 차단 사유의 Betaflight CLI 이름 목록이다. 빈 배열은 활성 사유 없음, `null`은 차단 상태 응답 없음이다. `arming_disable_mask`에 FC가 보낸 비트마스크를 함께 기록하고, 이름을 확인할 수 없는 비트는 `BIT_n`으로 표시한다. [Betaflight ARM 차단 이름](https://github.com/betaflight/betaflight/blob/2026.6.2/src/main/fc/runtime_config.c#L34-L65)
 
 영상과 마스크는 best effort를 사용한다. 정책용 마스크 구독은 depth 1이며 카메라 타임스탬프를 보존한다. Argus 버퍼 PTS를 쓸 수 없으면 카메라 도착 시각을 사용한다. HUD는 동일한 타임스탬프의 영상과 마스크를 사용한다.
 
@@ -105,7 +107,7 @@ ros2 launch adr_bringup real.launch.py \
 ros2 topic echo /adr/control/status --qos-reliability best_effort
 ```
 
-`policy_bench_imu:=true`는 정지·수평 IMU 관측값을 넣어 GateNet과 정책을 벤치에서 실행한다. 실측 IMU를 쓰는 추론은 `policy_bundle:=b6p53M`으로 실행한다. 다른 내보내기 번들은 `policy_bundle:=/absolute/path/to/deploy_bundle`로 지정한다. 정책 노드만 실행할 때는 `ros2 run adr_control policy_node --ros-args -p bundle_dir:=/absolute/path/to/deploy_bundle`를 사용한다.
+`policy_bench_imu:=true`는 정지·수평 IMU 관측값을 넣어 GateNet과 정책을 벤치에서 실행한다. 실측 IMU로 정책 추론만 하려면 `policy_bundle:=b6p53M policy_rc:=false`를 지정한다. 다른 내보내기 번들은 `policy_bundle:=/absolute/path/to/deploy_bundle`로 지정한다. 정책 노드만 실행할 때는 `ros2 run adr_control policy_node --ros-args -p bundle_dir:=/absolute/path/to/deploy_bundle`를 사용한다.
 
 | 토픽 | 내용 |
 |---|---|
@@ -120,11 +122,11 @@ ros2 topic echo /adr/control/status --qos-reliability best_effort
 ## Betaflight 정책 제어
 
 ```bash
-ros2 launch adr_bringup real.launch.py policy_rc:=true
+ros2 launch adr_bringup real.launch.py
 ros2 topic echo /adr/telemetry/fc_status --qos-reliability best_effort
 ```
 
-`policy_rc:=true`는 기본으로 설치된 `b6p53M`을 쓰고 기존 Jetson UART에서 `MSP_SET_RAW_RC`를 보낸다. `adr_betaflight`는 FC가 Betaflight 2026.6 이상, 물리 수신기, AETR 맵과 ANGLE·MSP OVERRIDE 모드를 보고할 때 RC 경로를 연다. 벤치 IMU와 일반 추론에서는 RC 발행이 비활성화된다.
+실기체 런치는 기본으로 `policy_rc`를 켜고 설치된 `b6p53M`을 쓴다. `adr_betaflight`는 FC가 Betaflight 2026.6 이상, 물리 수신기, AETR 맵과 ANGLE·MSP OVERRIDE 모드를 보고할 때 RC 경로를 연다. 텔레메트리와 영상만 보려면 `policy_rc:=false`를 지정한다. `msp:=false` 또는 `policy_bench_imu:=true`를 지정하면 `policy_rc` 기본값도 `false`가 된다.
 
 FC 설정에서 `msp_override_channels_mask = 15`, `msp_override_failsafe = OFF`, `angle_limit = 55`, yaw 최대 스틱 각속도 약 229°/s를 확인한다. ARM과 MSP OVERRIDE는 물리 조종기의 AUX 스위치에 매핑한다. 100 Hz마다 텔레메트리 조회와 RC 쓰기가 각각 한 번씩 이뤄지므로 `serial_update_rate_hz = 500`에서 시작해 Jetson에서 IMU 및 정책 발행률을 측정한다. ROS 토픽 조회는 `real.yaml`과 같은 `ROS_DOMAIN_ID`에서 실행한다. [Betaflight MSP OVERRIDE](https://betaflight.com/docs/wiki/guides/current/MSP-Companion-Computer-Control)
 
