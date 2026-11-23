@@ -1,12 +1,179 @@
-# adr_ros
+# Autonomous Drone Racing — ADR ROS 2
 
-Jetson 실기체 준비용 ROS 2 워크스페이스. 카메라, GateNet, 배터리 HUD, 영상 송출, rosbag을 실행한다. Betaflight 기체용 정책 추론을 별도로 켤 수 있다.
+## 1. 시스템 개요
 
-## Jetson에서 실행
+Jetson에서 CSI 카메라 영상으로 레이싱 게이트를 인식하고, GateNet 마스크와 Betaflight IMU로 비행 정책을 실행하는 ROS 2 시스템. 지상에서는 카메라·FC 텔레메트리·HUD 송출을 각각 점검할 수 있고, 실기체 및 스모크 실행은 rosbag으로 다시 볼 수 있다.
 
-ROS 2와 JetPack의 OpenCV, NumPy, PyYAML, PyGObject/GStreamer, Argus를 사용한다. GateNet 추론에는 해당 JetPack에서 동작하는 TensorRT/PyCUDA 또는 ONNX Runtime이 필요하다. 실시간 송출 시 MediaMTX와 GStreamer H.264/RTSP 플러그인도 설치한다.
+## 2. 요구사항
 
-선택적으로 Jetson에서 GateNet TensorRT 엔진을 만든다. 엔진은 빌드 전에 이 위치에 두거나, 외부 절대 경로를 `perception.engine_file`에 지정한다.
+| 항목 | 기준 / 용도 |
+| --- | --- |
+| 컴패니언 컴퓨터 | NVIDIA Jetson, Ubuntu 22.04, JetPack 6 계열 |
+| ROS | ROS 2 Humble, colcon |
+| 카메라 | IMX219 CSI, NVIDIA Argus / GStreamer |
+| GateNet | OpenCV, NumPy, PyYAML, TensorRT + PyCUDA 또는 ONNX Runtime |
+| 비행 컨트롤러 | Betaflight, 조종기용 물리 수신기, Jetson UART용 MSP 포트 |
+| UART | Python `pyserial`(`python3-serial`), 기본 500000 baud / 8N1 |
+| 영상 송출 | PyGObject, GStreamer H.264 / RTSP 플러그인, 로컬 송출 시 MediaMTX |
+| 녹화 | rosbag2 CLI, SQLite 저장 플러그인 |
+
+카메라와 영상 의존성은 [CSI 카메라](src/adr_camera/README.md)와 [HUD 송출](src/adr_streaming/README.md)을 참고한다.
+
+## 3. 노드 구조
+
+큰 테두리는 ROS 패키지, 둥근 네모는 ROS 토픽이다. 아래는 실기체 프로필의 주요 데이터 흐름이다.
+
+```mermaid
+flowchart TD
+    CSI["IMX219 CSI 카메라"]
+    FC["Betaflight FC"]
+    RADIO["조종기 · 물리 수신기"]
+
+    subgraph camera["adr_camera"]
+        CAM["csi_camera"]
+    end
+    IMAGE("/adr/camera/image_raw")
+    INFO("/adr/camera/camera_info")
+
+    subgraph perception["adr_perception"]
+        GATE["gatenet_node"]
+    end
+    MASK("/adr/perception/mask")
+    RECT("/adr/perception/image_rect · mask_full")
+
+    subgraph betaflight["adr_betaflight"]
+        MSP["msp_telemetry"]
+    end
+    IMU("/adr/telemetry/imu")
+    FCSTATUS("/adr/telemetry/fc_status")
+    BATTERY("/adr/telemetry/battery")
+
+    subgraph control["adr_control"]
+        POLICY["policy_node"]
+    end
+    RC("/adr/control/rc_action")
+
+    subgraph viz["adr_viz"]
+        MON["monitor"]
+    end
+    HUD("/adr/monitor/image")
+    JPEG("/adr/monitor/image/compressed")
+
+    subgraph streaming["adr_streaming"]
+        STREAM["hud_streamer"]
+    end
+    subgraph logging["adr_logging"]
+        LOG["flight_recorder"]
+    end
+    MTX["MediaMTX · RTSP / WebRTC"]
+    BAG["rosbag · Flight Analyzer"]
+
+    CSI --> CAM --> IMAGE --> GATE
+    CAM --> INFO
+    GATE --> MASK --> POLICY
+    GATE --> RECT --> MON
+    RADIO --> FC
+    MSP <-->|UART / MSP| FC
+    MSP --> IMU --> POLICY
+    MSP --> FCSTATUS --> POLICY
+    MSP --> BATTERY --> MON
+    IMU --> MON
+    FCSTATUS --> MON
+    POLICY --> RC --> MSP
+    MON --> HUD --> STREAM --> MTX
+    MON --> JPEG --> LOG --> BAG
+    FCSTATUS --> LOG
+```
+
+| 패키지 | 노드·실행 항목 | 역할 |
+| --- | --- | --- |
+| `adr_camera` | `csi_camera`, `image_relay` | CSI 영상과 보정 정보를 발행. `image_relay`는 별도 카메라 입력 연결에 사용 |
+| `adr_perception` | `gatenet_node` | GateNet 추론, 정책용 마스크와 HUD용 보정 영상·마스크 발행 |
+| `adr_betaflight` | `msp_telemetry` | MSP 조회, IMU·배터리·FC 상태·RC 발행, 인계 세션의 정책 RC 전달 |
+| `adr_control` | `policy_node` | 100 Hz 정책 루프와 게이트 전환, 정규화 액션 발행 |
+| `adr_viz` | `monitor` | 게이트 오버레이, FC 연결·자세·비행 상태·배터리 HUD |
+| `adr_streaming` | `hud_streamer` | HUD를 H.264로 인코딩하고 RTSP 서버로 송출 |
+| `adr_logging` | `flight_recorder` | 선택된 ROS 토픽을 rosbag으로 기록하고 세션 메타데이터 저장 |
+| `adr_bringup` | 실기체·스모크·카메라 테스트 launch | 프로필을 읽고 노드, 송출, 녹화를 구성 |
+
+## 4. 정책 인계 FSM
+
+```mermaid
+stateDiagram-v2
+    state "waiting_for_disarm" as DISARM
+    state "ready" as READY
+    state "waiting_for_action" as WAIT
+    state "active" as ACTIVE
+    state "restart_required" as RESTART
+
+    [*] --> DISARM
+    DISARM --> READY: DISARM · OVERRIDE OFF · 정상 수신
+    READY --> WAIT: ARM · ANGLE · OVERRIDE ON
+    READY --> DISARM: 인계 조건 불충족 또는 MSP 손실
+    WAIT --> ACTIVE: 첫 유효 정책 액션 전달
+    WAIT --> DISARM: OVERRIDE OFF · DISARM · ANGLE 해제
+    ACTIVE --> DISARM: OVERRIDE OFF · DISARM · ANGLE 해제
+    WAIT --> RESTART: 인계 시간 초과 · failsafe · MSP 손실
+    ACTIVE --> RESTART: 액션 만료 · failsafe · MSP 손실
+    RESTART --> [*]: 수동 복귀 · 지상 DISARM 확인 후 런치 재시작
+```
+
+| 상태 | 동작 |
+| --- | --- |
+| `waiting_for_disarm` | DISARM, OVERRIDE OFF, failsafe 해제를 확인한다. |
+| `ready` | 조종기가 제어한다. ARM·ANGLE에서 조종기가 OVERRIDE를 켜면 새 세션을 연다. |
+| `waiting_for_action` | 정책이 G1부터 시작한다. 첫 유효 액션을 최대 250 ms 기다린다. |
+| `active` | 현재 세션의 유효 액션을 FC로 전달한다. 액션 유효기간은 50 ms다. |
+| `restart_required` | 정책 RC 송신을 중단한다. 조종기로 수동 복귀 후 지상에서 재시작한다. |
+
+상태와 세션 ID는 `/adr/telemetry/fc_status`의 `rc_state`, `rc_session`에서 확인한다. HUD 테두리는 `DISARM` 회색, `ARM` 주황색, `AUTO` 초록색, `NO STATUS` 빨간색이다. 정책 RC 사용 중에는 `active`일 때 `AUTO`이며, 텔레메트리 모드에서는 ARM과 MSP OVERRIDE가 함께 활성일 때 `AUTO`로 표시한다. MSP가 끊기거나 FC 상태가 0.5초 이상 갱신되지 않으면 `NO STATUS`를 표시한다.
+
+Betaflight 4.4.3에서는 입력이나 UART가 끊기면 FC가 기존 MSP 스틱값을 유지할 수 있다. OVERRIDE를 OFF로 돌려 수동 복귀한다. MSP RC 입력 만료를 지원하는 펌웨어는 링크 손실 시 마지막 프레임이 만료되면 수신기로 복귀한다. 첫 인계와 수동 복귀 확인은 프롭을 제거한 벤치에서 진행한다. [4.4.3 OVERRIDE 처리](https://github.com/betaflight/betaflight/blob/4.4.3/src/main/rx/msp_override.c#L27-L38) · [Betaflight MSP OVERRIDE 안내](https://betaflight.com/docs/wiki/guides/current/MSP-Companion-Computer-Control)
+
+## 5. 관측과 제어
+
+### 5.1 카메라와 GateNet
+
+- IMX219 mode 3에서 **1640×1232, 30 fps**로 캡처하고, 카메라 노드에서 **320×240 BGR**로 하드웨어 축소한다.
+- GateNet은 정책용 **64×64 `mono8`** 마스크와 HUD용 **320×240** 보정 영상·마스크를 발행한다. 마스크 픽셀은 0 또는 255다.
+- GateNet 출력은 카메라 타임스탬프를 보존한다. HUD는 타임스탬프가 일치하는 보정 영상과 마스크를 합성한다.
+- 실기체·스모크 런치는 기본으로 Argus 자동 노출과 게인을 사용한다. `auto_exposure:=false`는 YAML을 적용한다. 기본 고정 설정은 8.33 ms, 아날로그·ISP 게인 1이다. 카메라 테스트는 YAML 설정을 사용한다.
+
+### 5.2 Betaflight 텔레메트리와 HUD
+
+- IMU와 자세 조회는 MSP로 묶어 **100 Hz**를 목표로 한다. 같은 조회에 조종 채널 **25 Hz**, 배터리 **2 Hz**를 추가한다. `betaflight.rc_hz: 0.0`은 RC 조회를 끈다.
+- IMU 자세는 ENU 월드 기준의 FLU 쿼터니언, 각속도는 rad/s, 가속도는 기체 FLU 기준 m/s²다. 기본 가속도 스케일은 **512 LSB/g**다. 수평 정지에서 첫 raw 샘플의 Z가 약 +512 LSB, 발행된 IMU의 Z가 약 +9.81 m/s²인지 확인한다.
+- IMU 타임스탬프는 Jetson의 응답 수신 시각이다. yaw는 FC 헤딩을 기준으로 한다.
+- HUD 우상단에 MSP 연결과 롤·피치·요, 좌상단에 비행 상태, 하단에 배터리 전압과 추정 잔량을 표시한다. 잔량은 FC 전류계와 용량 설정으로 추정하고, 해당 정보가 없으면 FC의 셀 전압 범위를 사용한다.
+- HUD의 기본 배터리 입력은 ROS `sensor_msgs/BatteryState`다. PX4 DDS를 쓰는 구성은 `px4_msgs`를 준비하고 `viz.battery_source: px4`를 지정한다.
+
+### 5.3 100 Hz 정책
+
+- 기본 번들은 `b6p53M`이다. `policy_meta.json`과 `policy_weights.npz`가 `adr_control`과 함께 설치된다. `onboard.py`에서 옮긴 NumPy 정책과 게이트 전환을 사용하며, 같은 마스크를 쓰는 tick에서는 CNN 결과를 재사용한다.
+- 관측의 기본 유효기간은 마스크 **150 ms**, IMU **50 ms**다. 입력이 만료되면 정책 액션 발행을 멈춘다. 실측 IMU로 추론하던 중 입력이 만료되면 노드를 재시작한다.
+- 출력은 `throttle, roll, pitch, yaw rate` 순서의 정규화 액션 네 개다. `policy_rc:=true`에서 인계가 성립하면 세션 ID와 단조 시계 타임스탬프가 붙은 액션을 Betaflight 브리지로 보낸다.
+
+### 5.4 주요 토픽
+
+| 토픽 | 내용 |
+| --- | --- |
+| `/adr/camera/image_raw`, `/adr/camera/camera_info` | 320×240 카메라 영상과 보정값 |
+| `/adr/perception/mask`, `/adr/perception/latency_ms` | 정책용 마스크와 카메라 타임스탬프부터 발행 직전까지의 지연 |
+| `/adr/perception/image_rect`, `/adr/perception/mask_full` | HUD용 보정 영상과 전체 해상도 마스크 |
+| `/adr/telemetry/imu`, `/adr/telemetry/battery` | IMU·자세와 배터리 전압·전류·잔량 |
+| `/adr/telemetry/fc_status` | 연결, FC 버전, ARM, ANGLE, MSP OVERRIDE, failsafe, 수신기 손실, ARM 차단 사유, 정책 RC 상태·세션 |
+| `/adr/telemetry/rc` | FC 적용 스틱 값과 `aux_us`(AUX1부터), ARM·OVERRIDE·failsafe 상태 |
+| `/adr/control/action`, `/adr/control/rc_action` | 정규화 정책 액션과 인계 세션의 RC 액션 |
+| `/adr/control/status` | 추론 빈도, 10 ms 초과 횟수, 입력 나이, 게이트 인덱스, `p_g` |
+| `/adr/monitor/image`, `/adr/monitor/image/compressed`, `/adr/monitor/status` | 원본 HUD, JPEG HUD, 배터리·비행 표시 상태 |
+
+`fc_status.arming_disable_flags`는 활성 차단 사유의 배열이다. `[]`는 활성 사유 없음, `null`은 확인 가능한 상태 응답 없음, `BIT_n`은 이름을 매핑하지 못한 비트를 뜻한다. `arming_disable_mask`에는 원본 비트마스크를 담는다. `/adr/telemetry/rc`는 FC가 적용 중인 채널을 조회하므로 OVERRIDE나 failsafe 중에는 해당 모드의 값이 포함될 수 있다.
+
+## 6. 실행방법
+
+### 6.1 Jetson 준비와 빌드
+
+저장소 루트에서 실행한다. TensorRT를 쓰는 경우 Jetson에서 엔진을 생성한 뒤 빌드한다. 외부 엔진은 `real.yaml`의 `perception.engine_file`에 절대 경로로 지정할 수 있다.
 
 ```bash
 /usr/src/tensorrt/bin/trtexec --onnx=src/adr_perception/configs/gatenet_240x320.onnx \
@@ -17,146 +184,83 @@ ROS 2와 JetPack의 OpenCV, NumPy, PyYAML, PyGObject/GStreamer, Argus를 사용�
 source /opt/ros/humble/setup.bash
 colcon build --symlink-install
 source install/setup.bash
-ros2 launch adr_bringup camera_test.launch.py view:=false
-```
-
-카메라 테스트에서 `view:=true`로 rqt 영상 뷰어를 띄울 수 있다. 테스트를 종료한 뒤 실기체 설정으로 HUD 조회, 송출과 녹화를 함께 실행한다.
-
-```bash
-ros2 launch adr_bringup real.launch.py
-```
-
-기본 파라미터는 [real.yaml](src/adr_bringup/config/real.yaml)에 있다. `config:=/path/to/real.yaml`로 덮어쓸 수 있다. IMX219은 mode 3, 1640×1232, 30 fps다. 카메라 노드에서 320×240 BGR로 하드웨어 축소한 다음 발행한다. 실기체 런치는 기본으로 Argus 자동 노출과 게인을 사용한다. `auto_exposure:=false`를 지정하면 YAML의 노출·게인 설정을 사용한다. 기본 YAML의 고정 노출은 8.33 ms이며 아날로그/ISP 게인은 1이다.
-
-## 영상 송출 스모크 테스트
-
-### 카메라 단독
-
-카메라, GateNet, HUD와 RTSP 송출을 점검한다. 아래 FC 런치 예시의 환경 설정을 먼저 적용한다.
-
-```bash
-ros2 launch adr_bringup smoke_test.launch.py
-```
-
-기본 카메라 모드는 실기체와 같은 mode 3이며, 두 스모크 테스트 모두 기본으로 Argus 자동 노출과 게인을 사용한다. 8.33 ms 고정 노출을 쓰려면 `auto_exposure:=false`를 지정한다.
-
-실기체 설정으로 카메라, GateNet, HUD, 스트리머를 띄우고 rosbag을 기록한다. 녹화는 `record:=false`로 끄거나 `log_dir:=...`로 저장 경로를 바꿀 수 있다. Flight Analyzer 목록에는 스모크 기록이 `SMOKE`로 표시된다.
-
-기본 송출은 로컬 MediaMTX를 사용한다. 다른 기기에서 `http://JETSON_IP:8889/hud` 또는 `rtsp://JETSON_IP:8554/hud`로 확인할 수 있다. 기존 RTSP 서버를 쓰려면 `stream_url:=rtsp://HOST:8554/hud`를 지정한다.
-
-### 카메라와 FC 연결
-
-카메라 파이프라인과 Betaflight UART 텔레메트리를 함께 점검한다. HUD에서 FC 연결 상태와 자세를 확인할 수 있다.
-
-젯슨의 새 터미널에서 아래 블록을 실행한다. 워크스페이스에 설치한 MediaMTX·GStreamer 플러그인과 `~/gatenet_ws`의 PyCUDA를 사용한다.
-
-```bash
-cd /home/inair/Workspace/adr_ros
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-
 export ADR_ROOT="$PWD"
-gst_lib="$PWD/.deps/smoke/gst/usr/lib/aarch64-linux-gnu"
+```
+
+새 터미널에서도 ROS와 워크스페이스를 소싱한다. MediaMTX는 `PATH` 또는 `$ADR_ROOT/.deps/hud/mediamtx`에서 찾는다. `ros2 topic` 조회에는 런치와 같은 `ROS_DOMAIN_ID`를 사용한다. 기본 도메인은 `0`이다.
+
+저장소의 `.deps/smoke`에 GStreamer 플러그인이 있고 `~/gatenet_ws/.venv`에 PyCUDA를 설치한 Jetson에서는 아래 환경도 적용한다.
+
+```bash
+gst_lib="$ADR_ROOT/.deps/smoke/gst/usr/lib/aarch64-linux-gnu"
 export LD_LIBRARY_PATH="$gst_lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export GST_PLUGIN_PATH="$gst_lib/gstreamer-1.0${GST_PLUGIN_PATH:+:$GST_PLUGIN_PATH}"
 export PYTHONPATH="$HOME/gatenet_ws/.venv/lib/python3.10/site-packages${PYTHONPATH:+:$PYTHONPATH}"
-export MTX_WEBRTC=no MTX_MOQ=no
-
-ros2 launch adr_bringup smoke_test.launch.py auto_exposure:=true
 ```
 
-이 명령으로 실행하면 VLC에서 `rtsp://JETSON_IP:8554/hud`를 연다.
+### 6.2 카메라·FC 스모크 테스트
 
-FC 텔레메트리까지 점검하려면 위 환경 설정 후 아래 명령을 실행한다. `msp_port`에는 사용할 시리얼 장치 경로를 넣는다. `msp_baud`에는 통신 속도를 넣는다. 각 옵션을 생략하면 설정 파일의 해당 값을 사용한다.
+| 런치 | 실행 구성 |
+| --- | --- |
+| `camera_test.launch.py` | CSI 카메라, GateNet, HUD. `view:=true`(기본값)로 로컬 rqt 이미지 뷰어 실행 |
+| `smoke_test.launch.py` | 카메라, GateNet, HUD, 실시간 송출, rosbag |
+| `fc_smoke_test.launch.py` | 영상 스모크 구성에 Betaflight 읽기 전용 텔레메트리 추가 |
+
+아래 명령은 한 번에 하나씩 실행한다. FC 스모크는 예시의 포트와 baud를 실제 기체에 맞춘다.
 
 ```bash
-ros2 launch adr_bringup fc_smoke_test.launch.py auto_exposure:=true msp_port:=/dev/ttyTHS1 msp_baud:=115200
+ros2 launch adr_bringup camera_test.launch.py view:=false
+ros2 launch adr_bringup smoke_test.launch.py
+ros2 launch adr_bringup fc_smoke_test.launch.py msp_port:=/dev/ttyTHS1 msp_baud:=500000
 ```
 
-## Betaflight UART 텔레메트리
+지상국에서 `rtsp://JETSON_IP:8554/hud`를 열면 HUD를 볼 수 있다. MediaMTX의 WebRTC가 켜져 있으면 `http://JETSON_IP:8889/hud`도 사용할 수 있다. 저지연 GStreamer 재생은 [HUD 송출 안내](src/adr_streaming/README.md)를 참고한다.
 
-`adr_betaflight`가 UART와 MSP 프로토콜을 담당한다. `adr_control`은 ROS IMU를 구독하고, `adr_viz`는 ROS 배터리를 구독한다. 실기체 런치는 `real.yaml`의 `betaflight` 설정으로 노드를 시작한다. 카메라만 점검할 때는 `camera_test.launch.py` 또는 `real.launch.py msp:=false`를 쓰면 된다.
+### 6.3 실기체 런치
 
-Jetson UART는 **`/dev/ttyTHS1`, 500000 baud, 8N1**이다. FC에서 실제 연결한 하드웨어 UART의 MSP를 켜고 500000 baud를 맞춘다. 두 장치의 UART 레벨을 확인한 뒤 TX↔RX와 공통 GND를 연결한다. [Betaflight Ports 설정](https://betaflight.com/docs/wiki/app/ports-tab) · [Betaflight baud 목록](https://github.com/betaflight/betaflight/blob/4.5.2/src/main/io/serial.c#L108-L110)
+기본 설정은 [real.yaml](src/adr_bringup/config/real.yaml)에 있다. FC에서는 Jetson이 연결된 UART의 `Configuration/MSP`만 켜고 baud를 Jetson 설정과 맞춘다. 기본값은 `/dev/ttyTHS1`과 `500000`이다. UART 전압 레벨을 확인하고 TX–RX를 교차 연결하며 GND를 공유한다. [Betaflight Ports 설정](https://betaflight.com/docs/wiki/app/ports-tab)
 
-텔레메트리만 단독으로 실행할 수 있다. Jetson의 시스템 Python에 `python3-serial`이 필요하다.
+```bash
+# 영상과 FC 텔레메트리만 점검
+ros2 launch adr_bringup real.launch.py policy_rc:=false
+
+# 기본 실기체 구성
+ros2 launch adr_bringup real.launch.py
+```
+
+정책 RC 사용 시 물리 수신기, AETR 채널 맵, ANGLE·MSP OVERRIDE 모드를 사용한다. FC에서 ARM과 MSP OVERRIDE는 물리 조종기 스위치에 매핑한다. 기존 정책 프로필의 FC 설정은 `msp_override_channels_mask = 15`, `angle_limit = 55`, yaw 최대 스틱 각속도 약 229°/s를 기준으로 한다. 지원되는 펌웨어에서는 `msp_override_failsafe`를 OFF로 사용한다. `serial_update_rate_hz`와 실제 IMU 발행률은 [MSP 계측](scripts/msp_diagnostics/README.md)으로 확인한다.
+
+| 인자 | 기본값 | 용도 |
+| --- | --- | --- |
+| `config` | 설치된 `config/real.yaml` | 기체별 YAML 경로 |
+| `auto_exposure` | `true` | Argus 자동 노출·게인 |
+| `msp` | `true` | Betaflight 브리지 실행 |
+| `msp_port`, `msp_baud` | YAML 값 | 시리얼 장치와 baud 덮어쓰기 |
+| `policy_rc` | MSP 사용 및 실측 IMU 모드에서 `true` | 정책 RC 경로 활성화 |
+| `policy_bundle` | 정책 RC·벤치 IMU 실행 시 `b6p53M` | 내장 번들 또는 외부 번들의 절대 경로 |
+| `policy_bench_imu` | `false` | 정지·수평 IMU를 넣어 추론 점검 |
+| `stream_url` | `local` | 로컬 MediaMTX, 외부 RTSP 송출 주소, 또는 빈 값으로 송출 끄기 |
+| `record`, `log_dir` | `true`, `flight_logs/` | 기록 여부와 로그 루트 |
+| `record_trigger` | `launch` | 실기체 런치에서 `px4_arm` 선택 가능 |
+
+실측 IMU로 **추론만** 보려면 `policy_bundle:=b6p53M policy_rc:=false`를 사용한다. 벤치 IMU로 테스트하려면 `policy_bench_imu:=true`를 사용한다. 별도 터미널에서 다음 중 필요한 항목을 확인한다.
+
+```bash
+ros2 topic hz /adr/telemetry/imu
+ros2 topic echo /adr/telemetry/fc_status --field data --qos-reliability best_effort
+ros2 topic echo /adr/telemetry/rc --field data --qos-reliability best_effort
+ros2 topic echo /adr/control/status --qos-reliability best_effort
+```
+
+MSP만 단독 확인하려면 아래를 실행한다. 같은 시리얼 장치를 쓰는 런치는 먼저 종료한다.
 
 ```bash
 ros2 run adr_betaflight msp_telemetry --ros-args \
   -p port:=/dev/ttyTHS1 -p baud:=500000 -p acc_lsb_per_g:=512.0
-ros2 topic hz /adr/telemetry/imu
-ros2 topic echo /adr/telemetry/battery --qos-reliability best_effort
-ros2 topic echo /adr/telemetry/rc --qos-reliability best_effort
 ```
 
-IMU와 자세는 하나의 MSP 요청으로 묶어 **100 Hz**를 목표로 발행한다. 배터리 조회는 **2 Hz**를 목표로 같은 요청에 추가한다. 토픽 타임스탬프는 Jetson의 응답 수신 시각이다. 첫 가속도 raw 샘플을 노드 로그에 남긴다. 기체가 수평 정지 상태일 때 `Z ≈ +512 LSB`와 ROS의 `Z ≈ +9.81 m/s²`를 확인한다. yaw는 FC 헤딩에서 변환하므로 절대 방위 기준의 정확도는 FC 설정에 달려 있다. [Betaflight MSP 응답 형식](https://github.com/betaflight/betaflight/blob/4.5.2/src/main/msp/msp.c#L2191-L2224)
+### 6.4 비행 로그 녹화 및 재생
 
-배터리 잔량은 FC에 용량과 전류계가 설정돼 있으면 사용량으로 추정하고, 그 외에는 FC의 셀 전압 범위로 추정한다. 계산에 필요한 설정이 없으면 미측정으로 표시한다. [Betaflight 배터리 잔량 계산](https://github.com/betaflight/betaflight/blob/2025.12.1/src/main/sensors/battery.c#L457-L469)
+실기체와 두 스모크 런치는 기본으로 시작부터 종료까지 `flight_logs/<세션>/bag/`에 기록한다. `Ctrl+C`로 종료하면 bag이 마감된다. 세션의 `manifest.json`에 런치 프로필과 시작 시각을 저장하며, Flight Analyzer 목록에서 **REAL**과 **SMOKE** 태그를 표시한다. GateNet 입력 JPEG·마스크 PNG·CSV를 별도로 저장하려면 실기체 YAML에서 `perception.record: true`를 지정한다.
 
-`MSP_RC`는 기본 **25 Hz**로 같은 MSP 요청에 추가하며, `real.launch.py`와 `fc_smoke_test.launch.py`의 rosbag에 기록된다. `betaflight.rc_hz`로 조절하고 `0.0`으로 조회를 끈다. 각 샘플에 ROS 수신 시각(`stamp_ns`), 마이크로초 단위의 스틱·AUX 값, 같은 요청에서 읽은 모드와 수신 상태를 담는다. 각 채널은 FC가 적용 중인 값으로, MSP가 덮어쓴 경우에는 정책 입력값, failsafe가 적용된 경우에는 FC의 대체값이 들어갈 수 있다. [Betaflight `MSP_RC` 구현](https://github.com/betaflight/betaflight/blob/2026.6.2/src/main/msp/msp.c#L1282-L1286)
-
-## 토픽
-
-| 토픽 | 내용 |
-|---|---|
-| `/adr/camera/image_raw` | 원본 화각을 320×240으로 줄인 BGR 프레임 |
-| `/adr/camera/camera_info` | 위 영상의 내부 파라미터와 왜곡 계수 |
-| `/adr/perception/mask` | 정책 입력용 64×64 `mono8` 마스크, 픽셀값 0 또는 255 |
-| `/adr/perception/mask_full` | 왜곡 보정 좌표계의 320×240 `mono8` 마스크 |
-| `/adr/perception/image_rect` | 마스크와 픽셀 좌표가 같은 320×240 보정 영상 |
-| `/adr/perception/latency_ms` | 카메라 타임스탬프에서 마스크 발행 직전까지 걸린 시간 |
-| `/adr/telemetry/imu` | Betaflight 각속도·가속도·자세를 담은 `sensor_msgs/Imu` |
-| `/adr/telemetry/battery` | 전압, 전류와 추정 잔량을 담은 `sensor_msgs/BatteryState` |
-| `/adr/telemetry/fc_status` | MSP 연결, FC 버전, ARM, MSP OVERRIDE, failsafe, 수신기 손실·FAILSAFE 스위치 플래그, ARM 차단 사유 목록과 비트마스크 |
-| `/adr/telemetry/rc` | `std_msgs/String` JSON의 `roll_us`, `pitch_us`, `yaw_us`, `throttle_us`, `aux_us`(AUX1부터 순서대로), `armed`, `msp_override`, `failsafe`, `rx_loss`, `failsafe_switch` |
-| `/adr/monitor/image`, `/adr/monitor/image/compressed` | GateNet 마스크와 하단 배터리 전압·잔량을 표시한 320×240 HUD |
-| `/adr/monitor/status` | 배터리 값과 수신 상태 |
-
-`fc_status.arming_disable_flags`는 활성 차단 사유의 Betaflight CLI 이름 목록이다. 빈 배열은 활성 사유 없음, `null`은 차단 상태 응답 없음이다. `arming_disable_mask`에 FC가 보낸 비트마스크를 함께 기록하고, 이름을 확인할 수 없는 비트는 `BIT_n`으로 표시한다. [Betaflight ARM 차단 이름](https://github.com/betaflight/betaflight/blob/2026.6.2/src/main/fc/runtime_config.c#L34-L65)
-
-영상과 마스크는 best effort를 사용한다. 정책용 마스크 구독은 depth 1이며 카메라 타임스탬프를 보존한다. Argus 버퍼 PTS를 쓸 수 없으면 카메라 도착 시각을 사용한다. HUD는 동일한 타임스탬프의 영상과 마스크를 사용한다.
-
-HUD 기본 배터리 입력은 `/adr/telemetry/battery`의 `sensor_msgs/BatteryState`다. 전압과 0~1 범위의 잔량을 표시한다. PX4 DDS를 쓰는 경우 `px4_msgs`를 준비하고 `viz.battery_source: px4`로 설정한다. 배터리 발행이 없거나 데이터가 오래되면 빈 값을 표시한다.
-
-HUD 우상단에는 MSP 연결과 롤·피치·요 각도를 표시한다. 좌상단 상태에 맞춰 테두리는 `DISARM` 회색, `ARM` 주황색, `AUTO` 초록색으로 바뀐다. `policy_rc:=true`에서는 정책 명령이 FC에 전달되기 시작하면 `AUTO`로 바뀐다. 텔레메트리 모드에서는 FC가 ARM 상태에서 MSP OVERRIDE를 보고하면 `AUTO`가 표시된다. FC 상태가 끊기거나 0.5초 동안 갱신되지 않으면 빨간 테두리와 `NO STATUS`를 표시한다. [Betaflight MSP OVERRIDE](https://betaflight.com/docs/wiki/guides/current/MSP-Companion-Computer-Control)
-
-실기체 런치는 기본으로 `flight_logs/`에 rosbag을 만들고 종료 시 마감한다. `record:=false`로 끄고, `log_dir:=...`로 경로를 바꾼다. PX4의 ARM/DISARM에 맞추려면 `record_trigger:=px4_arm`을 지정한다. GateNet 인계 형식의 입력 JPEG·마스크 PNG·CSV가 필요하면 `perception.record: true`를 설정한다. MediaMTX가 PATH에 있으면 로컬 HUD 스트림을 시작한다. `stream_url:=`로 끄거나 RTSP 주소를 지정할 수 있다.
-
-## 100 Hz 정책 추론
-
-`adr_control`은 `onboard.py`의 NumPy 정책과 게이트 전환 로직을 사용한다. `b6p53M` 번들(`team44up`, 학습 스텝 6,530,400)의 `policy_meta.json`과 `policy_weights.npz`는 `adr_control`과 함께 설치한다. 정책은 번들의 시작 게이트와 전환 조건을 읽고, 같은 마스크를 재사용하는 tick에서는 CNN 결과를 캐시한다.
-
-```bash
-ros2 launch adr_bringup real.launch.py \
-  policy_bundle:=b6p53M policy_bench_imu:=true
-ros2 topic echo /adr/control/status --qos-reliability best_effort
-```
-
-`policy_bench_imu:=true`는 정지·수평 IMU 관측값을 넣어 GateNet과 정책을 벤치에서 실행한다. 실측 IMU로 정책 추론만 하려면 `policy_bundle:=b6p53M policy_rc:=false`를 지정한다. 다른 내보내기 번들은 `policy_bundle:=/absolute/path/to/deploy_bundle`로 지정한다. 정책 노드만 실행할 때는 `ros2 run adr_control policy_node --ros-args -p bundle_dir:=/absolute/path/to/deploy_bundle`를 사용한다.
-
-| 토픽 | 내용 |
-|---|---|
-| `/adr/perception/mask` | 카메라 타임스탬프가 있는 64×64 GateNet 마스크. 최신 값을 100 Hz 루프에서 재사용 |
-| `/adr/telemetry/imu` | 자세·각속도·가속도가 채워진 `sensor_msgs/Imu`. 자세는 ENU 월드 기준의 기체 FLU 쿼터니언, 각속도는 rad/s, 가속도는 정지 시 +Z에 약 9.81 m/s²가 들어오는 기체 FLU 값 |
-| `/adr/control/action` | `Float32MultiArray`에 담은 4개 정규화 액션. 순서는 throttle, roll, pitch, yaw rate |
-| `/adr/control/rc_action` | `policy_rc:=true`에서 현재 인계 세션 ID, Jetson 단조 시계의 생성 시각, 4개 정규화 액션을 담은 JSON |
-| `/adr/control/status` | 1초마다 발행하는 JSON. 실측 추론 빈도, 10 ms 이상 걸린 횟수, 입력 나이, 게이트 인덱스와 `p_g` 포함 |
-
-입출력은 best effort, depth 1이다. 카메라와 IMU의 타임스탬프는 노드와 같은 ROS 시계를 사용한다. 기본 입력 유효기간은 마스크 150 ms, IMU 50 ms다. 두 값은 단독 노드에서 `mask_timeout_s`, `imu_timeout_s` 파라미터로 설정한다. 입력이 만료되면 액션 발행을 멈추고 정책 메모리와 게이트 인덱스를 초기화한다. 벤치 모드는 새 입력으로 추론을 재개한다. 실측 IMU 모드에서 실행 중 입력이 만료되면 노드 재시작을 요구한다.
-
-## Betaflight 정책 제어
-
-```bash
-ros2 launch adr_bringup real.launch.py
-ros2 topic echo /adr/telemetry/fc_status --qos-reliability best_effort
-```
-
-실기체 런치는 기본으로 `policy_rc`를 켜고 설치된 `b6p53M`을 쓴다. Betaflight 4.4.3에서도 물리 수신기, AETR 맵과 ANGLE·MSP OVERRIDE 모드가 설정돼 있으면 RC 경로를 연다. 텔레메트리와 영상만 보려면 `policy_rc:=false`를 지정한다. `msp:=false` 또는 `policy_bench_imu:=true`를 지정하면 `policy_rc` 기본값도 `false`가 된다.
-
-FC 설정에서 `msp_override_channels_mask = 15`, `angle_limit = 55`, yaw 최대 스틱 각속도 약 229°/s를 확인한다. `msp_override_failsafe`가 있는 펌웨어에서는 `OFF`를 사용한다. ARM과 MSP OVERRIDE는 물리 조종기의 AUX 스위치에 매핑한다. 100 Hz마다 텔레메트리 조회와 RC 쓰기가 각각 한 번씩 이뤄지므로 `serial_update_rate_hz = 500`에서 시작해 Jetson에서 IMU 및 정책 발행률을 측정한다. ROS 토픽 조회는 `real.yaml`과 같은 `ROS_DOMAIN_ID`에서 실행한다. [Betaflight MSP OVERRIDE](https://betaflight.com/docs/wiki/guides/current/MSP-Companion-Computer-Control)
-
-지상에서 DISARM·OVERRIDE OFF 상태로 런치한 뒤, ARM·ANGLE 상태에서 조종자가 OVERRIDE를 켜면 정책 메모리와 게이트 순서를 G1부터 시작한다. 정상 인계가 이뤄지면 `fc_status.rc_state`가 `active`가 된다. 조종자가 스위치를 끄면 수동으로 돌아가며, 다음 인계는 다시 DISARM·OVERRIDE OFF를 거쳐야 한다. 입력이 만료되면 정책 발행이 멈추고, 새 액션이 50 ms 동안 도착하지 않으면 브리지는 정책 명령을 멈춘다. 입력 또는 UART 손실 뒤에는 수동 복귀와 DISARM을 확인하고 지상에서 런치를 다시 시작한다.
-
-Betaflight 4.4.3에서는 OVERRIDE OFF일 때 중립 스틱과 최저 스로틀을 미리 전송해 FC에 저장된 MSP 스틱값을 대체한다. 입력이나 UART가 끊기면 OVERRIDE를 끌 때까지 FC가 마지막 스틱값을 적용할 수 있다. 2026.6 이상에서는 빈 RC 프레임으로 즉시 수신기로 넘길 수 있고, UART 자체가 끊겼을 때도 마지막 RC 프레임에서 약 300 ms 뒤 자동 복귀한다. 첫 확인은 프로펠러를 제거한 상태에서 조종기 스위치와 UART 분리로 진행한다. [4.4.3 OVERRIDE](https://github.com/betaflight/betaflight/blob/4.4.3/src/main/rx/msp_override.c#L27-L38) · [2026.6 RC 입력 만료](https://github.com/betaflight/betaflight/blob/2026.6.2/src/main/rx/msp.c#L56-L81)
-
-복사해 온 ArUco, 정밀착륙 컨트롤러, SITL/HITL 전용 파일은 `legacy/precision_landing/`에 참고용으로 보관한다.
+뷰어 설치·재생과 기록 항목은 [Flight Analyzer](scripts/flight_analyzer/README.md)를 참고한다. UART 응답 지연이나 재연결 원인은 [MSP 계측](scripts/msp_diagnostics/README.md)의 단독 프로브와 실제 런치 계측으로 확인할 수 있다. 정밀착륙에서 가져온 ArUco·SITL·HITL 코드는 [legacy/precision_landing](legacy/precision_landing/)에 보관한다.
