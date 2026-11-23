@@ -76,7 +76,7 @@ env -u PYTHONPATH /usr/bin/python3 scripts/camera_preview/imx219_preview.py --ba
 
 ```bash
 source install/setup.bash
-ros2 launch adr_bringup camera_test.launch.py
+ros2 launch adr_bringup smoke_test.launch.py record:=false
 ```
 
-HUD 창 없이 ROS 노드만 실행하려면 `view:=false`를 지정합니다.
+RTSP 플레이어에서 `rtsp://JETSON_IP:8554/hud`를 열어 HUD를 확인합니다.

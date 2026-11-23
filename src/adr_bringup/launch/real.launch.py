@@ -11,12 +11,14 @@ from launch.events import Shutdown
 from launch.substitutions import AndSubstitution, LaunchConfiguration, NotSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+from adr_bringup.runtime import runtime_environment, workspace_root
 from adr_bringup.recording import recorder, recording_arguments
 from adr_bringup.real_vision import enable_auto_exposure, vision_nodes
 from adr_bringup.streaming import streaming_actions
 
 
 def setup(context):
+    root = workspace_root()
     config_path = Path(LaunchConfiguration('config').perform(context)).expanduser().resolve()
     config_yaml = config_path.read_text(encoding='utf-8')
     config = yaml.safe_load(config_yaml)
@@ -44,7 +46,8 @@ def setup(context):
     stream_url = LaunchConfiguration('stream_url').perform(context).strip()
     policy = []
     if bundle:
-        imu_timeout_s = float(config.get('policy', {}).get('imu_timeout_s', 0.05))
+        control_config = config.get('control', config.get('policy', {}))
+        imu_timeout_s = float(control_config.get('imu_timeout_s', 0.05))
         policy = [Node(
             package='adr_control', executable='policy_node', output='screen',
             parameters=[{'bundle_dir': ParameterValue(bundle, value_type=str),
@@ -56,9 +59,9 @@ def setup(context):
         target_action=node,
         on_exit=[EmitEvent(event=Shutdown(reason='A required process exited'))],
     )) for node in nodes]
-    return [SetEnvironmentVariable('ROS_DOMAIN_ID', str(config.get('ros_domain_id', 0))),
+    return [*runtime_environment(context, root), SetEnvironmentVariable('ROS_DOMAIN_ID', str(config.get('ros_domain_id', 0))),
             *handlers, *nodes, *telemetry, *policy, recorder('real', config_yaml=yaml.safe_dump(config, sort_keys=False)),
-            *streaming_actions(stream_url)]
+            *streaming_actions(stream_url, root=root)]
 
 
 def generate_launch_description():

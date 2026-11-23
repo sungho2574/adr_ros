@@ -1,3 +1,6 @@
+rtsp: yes
+webrtc: no
+moq: no
 rtmp: no
 hls: no
 srt: no

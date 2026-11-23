@@ -33,7 +33,7 @@ betaflight:
   response_timeout_s: 0.100
   frame_id: base_link
 
-policy:
+control:
   imu_timeout_s: 0.05
 
 viz:

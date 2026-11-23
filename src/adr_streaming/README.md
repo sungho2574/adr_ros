@@ -17,8 +17,8 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
-Install MediaMTX on the Jetson. The real launch looks for `mediamtx` on
-`PATH` or under `$ADR_ROOT/.deps/hud/mediamtx`. From the repository root:
+Install MediaMTX on the Jetson. The real launch looks for `mediamtx` under the workspace
+`.deps/hud/mediamtx` or on `PATH`. From the repository root:
 
 ```bash
 ros2 launch adr_bringup real.launch.py policy_rc:=false
@@ -33,10 +33,8 @@ If a MediaMTX server is already running, supply its RTSP publish URL:
 ros2 launch adr_bringup real.launch.py policy_rc:=false stream_url:=rtsp://127.0.0.1:8554/hud
 ```
 
-On the ground station, open `http://JETSON_LAN_IP:8889/hud` in a browser
-for WebRTC playback, or open `rtsp://JETSON_LAN_IP:8554/hud` in an RTSP player.
-With the default MediaMTX ports, browser playback needs TCP 8889 and UDP 8189
-reachable on the Jetson. For RTSP playback over TCP, allow TCP 8554.
+On the ground station, open `rtsp://JETSON_LAN_IP:8554/hud` in an RTSP player.
+The bundled configuration enables RTSP only. Allow TCP 8554 for playback over TCP.
 The Jetson publisher uses RTSP over UDP on loopback by default.
 
 The defaults are 320×240, up to 25 fps, 450 kbps, x264 ultrafast/zerolatency,

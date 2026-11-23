@@ -201,7 +201,7 @@ ros2 launch adr_bringup real.launch.py policy_bundle:=b6p53M \
   policy_engine_dir:="$engine_dir" policy_rc:=false
 ```
 
-- 관측의 기본 유효기간은 마스크 **150 ms**, IMU **50 ms**다. IMU 유효기간은 [real.yaml](src/adr_bringup/config/real.yaml)의 `policy.imu_timeout_s`에 초 단위로 지정한다. 입력이 만료되면 정책 액션 발행을 멈춘다. 실측 IMU로 추론하던 중 입력이 만료되면 노드를 재시작한다.
+- 관측의 기본 유효기간은 마스크 **150 ms**, IMU **50 ms**다. IMU 유효기간은 [real.yaml](src/adr_bringup/config/real.yaml)의 `control.imu_timeout_s`에 초 단위로 지정한다. 입력이 만료되면 정책 액션 발행을 멈춘다. 실측 IMU로 추론하던 중 입력이 만료되면 노드를 재시작한다.
 - 출력은 `throttle, roll, pitch, yaw rate` 순서의 정규화 액션 네 개다. `policy_rc:=true`에서 인계가 성립하면 세션 ID와 단조 시계 타임스탬프가 붙은 액션을 Betaflight 브리지로 보낸다.
 
 ### 5.4 주요 토픽
@@ -235,43 +235,39 @@ ros2 launch adr_bringup real.launch.py policy_bundle:=b6p53M \
 source /opt/ros/humble/setup.bash
 colcon build --symlink-install
 source install/setup.bash
-export ADR_ROOT="$PWD"
 ```
 
-새 터미널에서도 ROS와 워크스페이스를 소싱한다. MediaMTX는 `PATH` 또는 `$ADR_ROOT/.deps/hud/mediamtx`에서 찾는다. `ros2 topic` 조회에는 런치와 같은 `ROS_DOMAIN_ID`를 사용한다. 기본 도메인은 `0`이다.
+새 Bash 터미널에서 `~/.bashrc`가 ROS Humble을 소싱하면 워크스페이스의 `install/setup.bash`만 소싱하면 된다. ROS가 자동으로 로드되지 않는 셸에서는 먼저 `source /opt/ros/humble/setup.bash`를 실행한다. 런치는 저장소의 `.venv`에 설치한 PyCUDA와 `.deps/smoke`의 GStreamer 라이브러리·플러그인 경로를 자동 적용한다. Jetson에서는 시스템 패키지를 사용할 수 있도록 `/usr/bin/python3 -m venv --system-site-packages .venv`로 환경을 만들고, 해당 JetPack과 Python에 맞게 빌드한 PyCUDA 및 NumPy 1.26을 준비한다.
 
-저장소의 `.deps/smoke`에 GStreamer 플러그인이 있고 `~/gatenet_ws/.venv`에 PyCUDA를 설치한 Jetson에서는 아래 환경도 적용한다.
-
-```bash
-gst_lib="$ADR_ROOT/.deps/smoke/gst/usr/lib/aarch64-linux-gnu"
-export LD_LIBRARY_PATH="$gst_lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-export GST_PLUGIN_PATH="$gst_lib/gstreamer-1.0${GST_PLUGIN_PATH:+:$GST_PLUGIN_PATH}"
-export PYTHONPATH="$HOME/gatenet_ws/.venv/lib/python3.10/site-packages${PYTHONPATH:+:$PYTHONPATH}"
-```
+로컬 송출은 `.deps/hud/mediamtx` 또는 `PATH`의 MediaMTX를 찾으며 RTSP로 제공한다. `ros2 topic` 조회에는 런치와 같은 `ROS_DOMAIN_ID`를 사용한다. 기본 도메인은 `0`이다.
 
 ### 6.2 카메라·FC 스모크 테스트
 
 | 런치 | 실행 구성 |
 | --- | --- |
-| `camera_test.launch.py` | CSI 카메라, GateNet, HUD. `view:=true`(기본값)로 로컬 rqt 이미지 뷰어 실행 |
 | `smoke_test.launch.py` | 카메라, GateNet, HUD, 실시간 송출, rosbag |
 | `fc_smoke_test.launch.py` | 영상 스모크 구성에 Betaflight 읽기 전용 텔레메트리 추가 |
 
 아래 명령은 한 번에 하나씩 실행한다. FC 스모크는 예시의 포트와 baud를 실제 기체에 맞춘다.
 
 ```bash
-ros2 launch adr_bringup camera_test.launch.py view:=false
+cd /home/inair/Workspace/adr_ros
+source install/setup.bash
+
 ros2 launch adr_bringup smoke_test.launch.py
 ros2 launch adr_bringup fc_smoke_test.launch.py msp_port:=/dev/ttyTHS1 msp_baud:=500000
 ```
 
-지상국에서 `rtsp://JETSON_IP:8554/hud`를 열면 HUD를 볼 수 있다. MediaMTX의 WebRTC가 켜져 있으면 `http://JETSON_IP:8889/hud`도 사용할 수 있다. 저지연 GStreamer 재생은 [HUD 송출 안내](src/adr_streaming/README.md)를 참고한다.
+지상국에서 `rtsp://JETSON_IP:8554/hud`를 열면 HUD를 볼 수 있다. 저지연 GStreamer 재생은 [HUD 송출 안내](src/adr_streaming/README.md)를 참고한다.
 
 ### 6.3 실기체 런치
 
 기본 설정은 [real.yaml](src/adr_bringup/config/real.yaml)에 있다. FC에서는 Jetson이 연결된 UART의 `Configuration/MSP`만 켜고 baud를 Jetson 설정과 맞춘다. 기본값은 `/dev/ttyTHS1`과 `500000`이다. UART 전압 레벨을 확인하고 TX–RX를 교차 연결하며 GND를 공유한다. [Betaflight Ports 설정](https://betaflight.com/docs/wiki/app/ports-tab)
 
 ```bash
+cd /home/inair/Workspace/adr_ros
+source install/setup.bash
+
 # 영상과 FC 텔레메트리만 점검
 ros2 launch adr_bringup real.launch.py policy_rc:=false
 

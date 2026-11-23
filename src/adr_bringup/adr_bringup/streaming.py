@@ -1,7 +1,6 @@
 """Build the ROS HUD publisher and its optional local RTSP server."""
-import os
-from pathlib import Path
 from shutil import which
+from pathlib import Path
 
 from ament_index_python.packages import PackageNotFoundError, get_package_share_directory
 from launch.actions import ExecuteProcess, LogInfo
@@ -9,7 +8,7 @@ from launch.logging import launch_config
 from launch_ros.actions import Node
 
 
-def streaming_actions(stream_url, *, required=False):
+def streaming_actions(stream_url, *, root, required=False):
     def unavailable(reason):
         if required:
             raise RuntimeError(reason)
@@ -25,9 +24,7 @@ def streaming_actions(stream_url, *, required=False):
             config = Path(get_package_share_directory('adr_streaming')) / 'mediamtx.yml'
         except PackageNotFoundError:
             return unavailable('Build the adr_streaming package.')
-        binary = which('mediamtx')
-        if binary is None and os.environ.get('ADR_ROOT'):
-            binary = which(str(Path(os.environ['ADR_ROOT']) / '.deps/hud/mediamtx'))
+        binary = which(str(root / '.deps/hud/mediamtx')) or which('mediamtx')
         if binary is None or not config.is_file():
             return unavailable('MediaMTX executable or configuration is missing.')
         actions.append(ExecuteProcess(
