@@ -5,6 +5,7 @@ const T = "/pl/control/status";
 const D = "/pl/detection/status";
 const M = "/adr/monitor/status";
 const FC = "/adr/telemetry/fc_status";
+const RC = "/adr/telemetry/rc";
 const IMU = "/adr/telemetry/imu";
 const BATTERY = "/adr/telemetry/battery";
 const CONTROL = "/adr/control/status";
@@ -55,6 +56,16 @@ function standardPanels() {
     panel("Battery remaining", remaining,
       [[remaining === BATTERY ? "remaining_pct" : "battery_value_remaining_pct", "Remaining"]], "[%]"),
     panel("Battery current", BATTERY, [["current", "Current"]], "[A] · negative while discharging"),
+    panel("RC sticks", RC,
+      [["throttle_us", "Throttle"], ["roll_us", "Roll"], ["pitch_us", "Pitch"], ["yaw_us", "Yaw"]],
+      "FC-reported channels [µs]"),
+    panel("RC AUX", RC,
+      Object.keys(rec.topics[RC]?.fields ?? {})
+        .filter((field) => /^aux_us_[0-9]+$/.test(field))
+        .map((field) => [field, Number(field.slice("aux_us_".length)) + 1])
+        .sort((a, b) => a[1] - b[1])
+        .map(([field, channel]) => [field, `AUX${channel}`]),
+      "FC-reported channels [µs]"),
     panel("Policy action", ACTION,
       [["data_0", "Throttle"], ["data_1", "Roll"], ["data_2", "Pitch"], ["data_3", "Yaw rate"]], "Normalized"),
     panel("Policy rate", CONTROL, [["step_hz", "Measured"]], "[Hz]"),
