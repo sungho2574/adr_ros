@@ -14,7 +14,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image, Imu
 from std_msgs.msg import Float32MultiArray, String
 
-from .policy import FlightPlan, Policy
+from .flight_plan import FlightPlan
 
 PERIOD_S = 0.01
 MASK_SHAPE = (64, 64)
@@ -94,7 +94,19 @@ class PolicyNode(Node):
             if not (bundle / name).is_file():
                 raise FileNotFoundError(f'Missing policy bundle file: {bundle / name}')
 
-        self.policy = Policy(bundle)
+        engine_dir = self.declare_parameter('engine_dir', '').value
+        backend = self.declare_parameter('backend', 'tensorrt').value
+        if backend == 'tensorrt':
+            from adr_control.trt_policy import TensorRTPolicy
+            self.policy = TensorRTPolicy(bundle, Path(engine_dir).expanduser() if engine_dir else bundle)
+        elif backend == 'torch':
+            import torch
+            from adr_control.policy import Policy
+
+            torch.set_num_threads(1)
+            self.policy = Policy(bundle)
+        else:
+            raise ValueError(f'Unknown policy backend: {backend}')
         meta = self.policy.meta
         self.plan = FlightPlan(meta)
         if (meta['control']['freq_hz'] != 100 or tuple(meta['control']['action']) != ACTION_ORDER
@@ -137,7 +149,7 @@ class PolicyNode(Node):
         self.steady_clock = Clock(clock_type=ClockType.STEADY_TIME)
         self.create_timer(PERIOD_S, self.tick, clock=self.steady_clock)
         self.create_timer(1.0, self.report, clock=self.steady_clock)
-        self.get_logger().info(f'100 Hz policy loaded from {bundle}')
+        self.get_logger().info(f'100 Hz policy loaded on {self.policy.device} from {bundle}')
 
     def receive_mask(self, msg):
         self.mask = self.receive(msg, decode_mask, self.mask, self.mask_timeout)

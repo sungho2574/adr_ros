@@ -19,6 +19,8 @@ __pycache__/
 # TensorRT engines are built on the target Jetson
 *.plan
 *.engine
+!/src/adr_control/policies/b6p53M/*.plan
+!/src/adr_perception/configs/gatenet_240x320_fp16.plan
 
 
 venv

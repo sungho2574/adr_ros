@@ -10,6 +10,7 @@ setup(
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/policies/b6p53M', [
+            'policies/b6p53M/encoder.plan', 'policies/b6p53M/step.plan',
             'policies/b6p53M/policy_meta.json', 'policies/b6p53M/policy_weights.npz',
         ]),
     ],

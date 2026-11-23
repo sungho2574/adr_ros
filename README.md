@@ -149,7 +149,23 @@ Betaflight 4.4.3에서는 입력이나 UART가 끊기면 FC가 기존 MSP 스틱
 
 ### 5.3 100 Hz 정책
 
-- 기본 번들은 `b6p53M`이다. `policy_meta.json`과 `policy_weights.npz`가 `adr_control`과 함께 설치된다. `onboard.py`에서 옮긴 NumPy 정책과 게이트 전환을 사용하며, 같은 마스크를 쓰는 tick에서는 CNN 결과를 재사용한다.
+- GateNet과 `b6p53M` 정책의 기본 백엔드는 TensorRT다. 기본 정책 엔진은 번들과 함께 설치되고, `policy_backend:=torch`로 PyTorch를 선택할 수 있다.
+- 엔진과 모델 파일은 Git LFS로 관리한다. 빌드 전 이 저장소에서 `git lfs install`과 `git lfs pull`을 실행한다.
+- 다른 Jetson 환경에서 정책 엔진을 다시 빌드할 때는 아래 명령을 쓴다. 내보내기에는 PyTorch와 ONNX가 필요하며, 엔진 실행에는 TensorRT와 PyCUDA가 필요하다.
+
+```bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+engine_dir="$PWD/.deps/policy-trt/b6p53M"
+python3 scripts/export_policy_trt.py src/adr_control/policies/b6p53M "$engine_dir"
+for name in encoder step; do
+  /usr/src/tensorrt/bin/trtexec --onnx="$engine_dir/$name.onnx" \
+    --saveEngine="$engine_dir/$name.plan" --noTF32 --skipInference || break
+done
+ros2 launch adr_bringup real.launch.py policy_bundle:=b6p53M \
+  policy_engine_dir:="$engine_dir" policy_rc:=false
+```
+
 - 관측의 기본 유효기간은 마스크 **150 ms**, IMU **50 ms**다. IMU 유효기간은 [real.yaml](src/adr_bringup/config/real.yaml)의 `policy.imu_timeout_s`에 초 단위로 지정한다. 입력이 만료되면 정책 액션 발행을 멈춘다. 실측 IMU로 추론하던 중 입력이 만료되면 노드를 재시작한다.
 - 출력은 `throttle, roll, pitch, yaw rate` 순서의 정규화 액션 네 개다. `policy_rc:=true`에서 인계가 성립하면 세션 ID와 단조 시계 타임스탬프가 붙은 액션을 Betaflight 브리지로 보낸다.
 

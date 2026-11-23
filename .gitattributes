@@ -1,0 +1,4 @@
+src/adr_control/policies/**/*.npz filter=lfs diff=lfs merge=lfs -text
+src/adr_control/policies/**/*.plan filter=lfs diff=lfs merge=lfs -text
+src/adr_perception/configs/gatenet*.onnx filter=lfs diff=lfs merge=lfs -text
+src/adr_perception/configs/gatenet*.plan filter=lfs diff=lfs merge=lfs -text

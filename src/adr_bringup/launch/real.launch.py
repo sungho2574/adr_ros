@@ -48,6 +48,8 @@ def setup(context):
         policy = [Node(
             package='adr_control', executable='policy_node', output='screen',
             parameters=[{'bundle_dir': ParameterValue(bundle, value_type=str),
+                         'backend': LaunchConfiguration('policy_backend'),
+                         'engine_dir': ParameterValue(LaunchConfiguration('policy_engine_dir'), value_type=str),
                          'bench_imu': bench_imu, 'enable_rc': policy_rc,
                          'imu_timeout_s': imu_timeout_s}])]
     handlers = [RegisterEventHandler(OnProcessExit(
@@ -75,6 +77,10 @@ def generate_launch_description():
                               description='Override betaflight.port from the config'),
         DeclareLaunchArgument('msp_baud', default_value='',
                               description='Override betaflight.baud from the config'),
+        DeclareLaunchArgument('policy_backend', default_value='tensorrt', choices=['tensorrt', 'torch'],
+                              description='Policy inference backend'),
+        DeclareLaunchArgument('policy_engine_dir', default_value='',
+                              description='Directory with TensorRT encoder.plan and step.plan'),
         DeclareLaunchArgument('policy_bundle', default_value='',
                               description='Use b6p53M or a deploy bundle directory. An empty value '
                                           'uses b6p53M when policy RC or bench IMU is enabled'),
