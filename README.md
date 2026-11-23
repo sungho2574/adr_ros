@@ -150,7 +150,7 @@ Betaflight 4.4.3에서는 입력이나 UART가 끊기면 FC가 기존 MSP 스틱
 ### 5.3 100 Hz 정책
 
 - 기본 번들은 `b6p53M`이다. `policy_meta.json`과 `policy_weights.npz`가 `adr_control`과 함께 설치된다. `onboard.py`에서 옮긴 NumPy 정책과 게이트 전환을 사용하며, 같은 마스크를 쓰는 tick에서는 CNN 결과를 재사용한다.
-- 관측의 기본 유효기간은 마스크 **150 ms**, IMU **50 ms**다. 입력이 만료되면 정책 액션 발행을 멈춘다. 실측 IMU로 추론하던 중 입력이 만료되면 노드를 재시작한다.
+- 관측의 기본 유효기간은 마스크 **150 ms**, IMU **50 ms**다. IMU 유효기간은 [real.yaml](src/adr_bringup/config/real.yaml)의 `policy.imu_timeout_s`에 초 단위로 지정한다. 입력이 만료되면 정책 액션 발행을 멈춘다. 실측 IMU로 추론하던 중 입력이 만료되면 노드를 재시작한다.
 - 출력은 `throttle, roll, pitch, yaw rate` 순서의 정규화 액션 네 개다. `policy_rc:=true`에서 인계가 성립하면 세션 ID와 단조 시계 타임스탬프가 붙은 액션을 Betaflight 브리지로 보낸다.
 
 ### 5.4 주요 토픽
@@ -239,7 +239,6 @@ ros2 launch adr_bringup real.launch.py
 | `policy_rc` | MSP 사용 및 실측 IMU 모드에서 `true` | 정책 RC 경로 활성화 |
 | `policy_bundle` | 정책 RC·벤치 IMU 실행 시 `b6p53M` | 내장 번들 또는 외부 번들의 절대 경로 |
 | `policy_bench_imu` | `false` | 정지·수평 IMU를 넣어 추론 점검 |
-| `policy_imu_timeout_s` | `0.05` | 정책이 사용하는 실측 IMU의 최대 나이(초) |
 | `stream_url` | `local` | 로컬 MediaMTX, 외부 RTSP 송출 주소, 또는 빈 값으로 송출 끄기 |
 | `record`, `log_dir` | `true`, `flight_logs/` | 기록 여부와 로그 루트 |
 | `record_trigger` | `launch` | 실기체 런치에서 `px4_arm` 선택 가능 |

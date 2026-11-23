@@ -33,6 +33,9 @@ betaflight:
   response_timeout_s: 0.025
   frame_id: base_link
 
+policy:
+  imu_timeout_s: 0.05
+
 viz:
   fps: 30.0
   output_width: 320
