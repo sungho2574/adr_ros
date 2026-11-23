@@ -239,6 +239,7 @@ ros2 launch adr_bringup real.launch.py
 | `policy_rc` | MSP 사용 및 실측 IMU 모드에서 `true` | 정책 RC 경로 활성화 |
 | `policy_bundle` | 정책 RC·벤치 IMU 실행 시 `b6p53M` | 내장 번들 또는 외부 번들의 절대 경로 |
 | `policy_bench_imu` | `false` | 정지·수평 IMU를 넣어 추론 점검 |
+| `policy_imu_timeout_s` | `0.05` | 정책이 사용하는 실측 IMU의 최대 나이(초) |
 | `stream_url` | `local` | 로컬 MediaMTX, 외부 RTSP 송출 주소, 또는 빈 값으로 송출 끄기 |
 | `record`, `log_dir` | `true`, `flight_logs/` | 기록 여부와 로그 루트 |
 | `record_trigger` | `launch` | 실기체 런치에서 `px4_arm` 선택 가능 |

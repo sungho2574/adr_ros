@@ -47,7 +47,9 @@ def setup(context):
         policy = [Node(
             package='adr_control', executable='policy_node', output='screen',
             parameters=[{'bundle_dir': ParameterValue(bundle, value_type=str),
-                         'bench_imu': bench_imu, 'enable_rc': policy_rc}])]
+                         'bench_imu': bench_imu, 'enable_rc': policy_rc,
+                         'imu_timeout_s': ParameterValue(
+                             LaunchConfiguration('policy_imu_timeout_s'), value_type=float)}])]
     handlers = [RegisterEventHandler(OnProcessExit(
         target_action=node,
         on_exit=[EmitEvent(event=Shutdown(reason='A required process exited'))],
@@ -78,6 +80,8 @@ def generate_launch_description():
                                           'uses b6p53M when policy RC or bench IMU is enabled'),
         DeclareLaunchArgument('policy_bench_imu', default_value='false', choices=['true', 'false'],
                               description='Use stationary IMU inputs while bench-testing the policy'),
+        DeclareLaunchArgument('policy_imu_timeout_s', default_value='0.05',
+                              description='Maximum age in seconds of measured policy IMU input'),
         DeclareLaunchArgument(
             'policy_rc', choices=['true', 'false'],
             default_value=AndSubstitution(
