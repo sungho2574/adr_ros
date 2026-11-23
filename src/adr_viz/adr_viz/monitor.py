@@ -20,6 +20,8 @@ IMAGE_QOS = QoSProfile(depth=4, reliability=ReliabilityPolicy.BEST_EFFORT)
 WHITE = (255, 255, 255)
 GREEN = (0, 220, 0)
 RED = (0, 0, 255)
+ORANGE = (0, 165, 255)
+GRAY = (160, 160, 160)
 MODE_COLORS = {'AUTO': GREEN, 'ARMED': (0, 165, 255), 'DISARMED': (160, 160, 160),
                'NO STATUS': RED}
 
@@ -52,7 +54,7 @@ def flight_mode(armed, msp_override):
     return 'DISARMED' if armed is False else 'NO STATUS'
 
 
-def render(frame, mask, battery, flight, max_width):
+def render(frame, mask, battery, flight, max_width, control=None):
     if frame.shape[:2] != mask.shape:
         raise ValueError('Rectified frame and GateNet mask sizes differ')
     canvas = frame.copy()
@@ -103,17 +105,57 @@ def render(frame, mask, battery, flight, max_width):
     draw(flight['mode'].removesuffix('ED'), top, WHITE if flight['mode'] == 'DISARMED' else color)
     connected = flight['connected']
     draw('FC CONNECTED' if connected else 'FC DISCONNECTED', top,
-         GREEN if connected else RED, align='right', size=0.8)
+         GREEN if connected else RED, align='right', size=0.65)
     angles = flight['attitude']
     for index, axis in enumerate(('roll', 'pitch', 'yaw'), start=1):
         value = angles[f'{axis}_deg'] if angles is not None else None
         degrees = f'{value:+.1f} deg' if value is not None else '--'
-        draw(f'{axis.upper()}  {degrees}', top + index * line_height, align='right', size=0.75)
+        draw(f'{axis.upper()}  {degrees}', top + index * line_height, align='right', size=0.60)
+
+    if control is not None:
+        rc_state = flight.get('rc_state')
+        rc_label = {
+            'active': 'RC ACTIVE', 'disabled': 'RC OFF',
+            'restart_required': 'RESTART REQUIRED',
+            'waiting_for_action': 'RC WAIT ACTION',
+            'waiting_for_disarm': 'RC WAIT DISARM',
+            'ready': 'RC READY', 'unavailable': 'RC UNAVAILABLE',
+        }.get(rc_state, 'RC NO STATUS')
+        rc_color = {
+            'active': GREEN, 'restart_required': RED,
+            'ready': ORANGE, 'waiting_for_action': ORANGE, 'waiting_for_disarm': ORANGE,
+        }.get(rc_state, GRAY)
+        policy_state = control.get('state')
+        policy_label = {
+            'stopped_stale_mask': 'MASK STALE',
+            'stopped_stale_imu': 'IMU STALE',
+            'stale_mask': 'MASK STALE',
+            'stale_imu': 'IMU STALE',
+            'running': f"POLICY {control.get('step_hz', 0):.0f} Hz",
+        }.get(policy_state, policy_state.replace('_', ' ').upper() if policy_state else 'POLICY NO STATUS')
+        policy_color = WHITE
+        if policy_state is None:
+            policy_color = GRAY
+        elif policy_state.startswith('waiting_'):
+            policy_color = ORANGE
+        elif policy_state.startswith(('stale_', 'stopped_')):
+            policy_color = RED
+        mask_age = control.get('mask_age_ms')
+        imu_age = control.get('imu_age_ms')
+        lines = (
+            (rc_label, rc_color),
+            (policy_label, policy_color),
+            (f'MASK {mask_age:.0f} ms' if mask_age is not None else 'MASK -- ms', WHITE),
+            (f'IMU {imu_age:.0f} ms' if imu_age is not None else 'IMU -- ms', WHITE),
+        )
+        control_top = top + 4 * line_height + margin
+        for index, (label, text_color) in enumerate(lines):
+            draw(label, control_top + index * line_height, text_color, align='right', size=0.65)
 
     voltage, percent = battery['voltage_v'], battery['remaining_pct']
     volts = '-- V' if voltage is None else f'{voltage:.2f} V'
     remaining = '-- %' if percent is None else f'{percent:.0f} %'
-    draw(f'{volts}     {remaining}', h - margin, align='center', size=0.95)
+    draw(f'{volts}     {remaining}', h - margin, align='center', size=0.75)
     return canvas
 
 
@@ -142,6 +184,7 @@ class Monitor(Node):
         self.battery = battery_values(0.0, -1.0, False)
         self.battery_at = None
         self.fc = self.fc_at = None
+        self.control = self.control_at = None
         self.attitude = self.attitude_at = None
         self.raw_pub = self.create_publisher(Image, '/adr/monitor/image', IMAGE_QOS)
         self.jpeg_pub = self.create_publisher(CompressedImage, '/adr/monitor/image/compressed', IMAGE_QOS)
@@ -151,6 +194,7 @@ class Monitor(Node):
         self.create_subscription(Image, '/adr/perception/mask_full',
                                  lambda msg: self.receive_image(msg, 1), IMAGE_QOS)
         self.create_subscription(String, '/adr/telemetry/fc_status', self.receive_fc, IMAGE_QOS)
+        self.create_subscription(String, '/adr/control/status', self.receive_control, IMAGE_QOS)
         self.create_subscription(Imu, '/adr/telemetry/imu', self.receive_attitude, IMAGE_QOS)
         topic = cfg['battery_topic']
         if cfg['battery_source'] == 'ros':
@@ -202,6 +246,21 @@ class Monitor(Node):
             self.attitude = None
             self.attitude_at = None
 
+    def receive_control(self, msg):
+        try:
+            value = json.loads(msg.data)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(value, dict) or not isinstance(value.get('state'), str):
+            return
+        for key in ('step_hz', 'mask_age_ms', 'imu_age_ms'):
+            number = value.get(key)
+            if isinstance(number, (int, float)) and math.isfinite(number):
+                continue
+            value[key] = 0 if key == 'step_hz' else None
+        self.control = value
+        self.control_at = time.monotonic()
+
     def receive_attitude(self, msg):
         self.attitude = (attitude_degrees(msg.orientation)
                          if msg.orientation_covariance[0] != -1 else None)
@@ -217,6 +276,7 @@ class Monitor(Node):
             mode = flight_mode(self.fc.get('armed'), auto)
         fresh_angles = self.attitude_at is not None and now - self.attitude_at <= self.fc_stale_after
         return {'connected': connected, 'mode': mode,
+                'rc_state': rc_state if connected else None,
                 'attitude': self.attitude if connected and fresh_angles else None}
 
     def tick(self):
@@ -240,7 +300,10 @@ class Monitor(Node):
             if mask.encoding != 'mono8' or mask.step < mask.width:
                 raise ValueError('Invalid GateNet mask encoding or stride')
             pixels = np.frombuffer(mask.data, np.uint8).reshape(mask.height, mask.step)[:, :mask.width]
-            canvas = render(frame, pixels, battery, flight, self.output_width)
+            control = self.control
+            if self.control_at is not None and now - self.control_at > self.stale_after:
+                control = {}
+            canvas = render(frame, pixels, battery, flight, self.output_width, control)
         except (ValueError, cv2.error) as exc:
             self.get_logger().warn(str(exc), throttle_duration_sec=5.0)
             return

@@ -130,6 +130,41 @@ stateDiagram-v2
 
 Betaflight 4.4.3에서는 입력이나 UART가 끊기면 FC가 기존 MSP 스틱값을 유지할 수 있다. OVERRIDE를 OFF로 돌려 수동 복귀한다. MSP RC 입력 만료를 지원하는 펌웨어는 링크 손실 시 마지막 프레임이 만료되면 수신기로 복귀한다. 첫 인계와 수동 복귀 확인은 프롭을 제거한 벤치에서 진행한다. [4.4.3 OVERRIDE 처리](https://github.com/betaflight/betaflight/blob/4.4.3/src/main/rx/msp_override.c#L27-L38) · [Betaflight MSP OVERRIDE 안내](https://betaflight.com/docs/wiki/guides/current/MSP-Companion-Computer-Control)
 
+### HUD 제어 상태 4줄
+
+우상단 FC 연결·자세 표시 아래에 RC 상태, 정책 상태, 마스크 나이, IMU 나이가 차례로 표시된다. 정책 상태를 한 번 이상 받은 뒤 이 영역이 나타난다.
+
+**첫째 줄 · RC 인계 상태**는 `/adr/telemetry/fc_status`의 `rc_state`를 사용한다.
+
+| HUD | 상태 값 | 색상 | 의미 |
+| --- | --- | --- | --- |
+| `RC ACTIVE` | `active` | 초록 | 유효한 정책 액션을 받아 FC로 RC 명령을 보내는 중이다. |
+| `RC READY` | `ready` | 주황 | 수동 제어 상태에서 인계 가능 조건을 충족했다. ARM 상태에서 ANGLE이 켜져 있고 OVERRIDE를 올리면 인계를 시작한다. |
+| `RC WAIT ACTION` | `waiting_for_action` | 주황 | 인계 세션을 열었고 첫 유효 정책 액션을 최대 250 ms 기다린다. |
+| `RC WAIT DISARM` | `waiting_for_disarm` | 주황 | DISARM, OVERRIDE OFF, failsafe 해제를 함께 기다린다. 이미 디스암이어도 AUX4에 설정한 OVERRIDE가 켜져 있으면 이 상태에 머무른다. |
+| `RESTART REQUIRED` | `restart_required` | 빨강 | 첫 액션 대기 초과, 정책 액션 만료, 인계 중 failsafe나 링크 손실 등으로 정책 RC 송신이 중단됐다. 수동 복귀 후 지상에서 런치를 재시작해야 새 인계를 할 수 있다. |
+| `RC OFF` | `disabled` | 회색 | 정책 RC 송신이 비활성화됐다. 정책 번들을 별도로 실행했다면 ROS 액션은 확인할 수 있다. |
+| `RC UNAVAILABLE` | `unavailable` | 회색 | FC에는 연결됐지만 정책 RC 사용 조건을 충족하지 못했다. MSP 노드의 설정 확인 로그를 본다. |
+| `RC NO STATUS` | 표시 가능한 상태 없음 | 회색 | FC 연결이 없거나 FC 상태가 오래됐거나 상태 값을 해석할 수 없다. |
+
+**둘째 줄 · 정책 상태**는 `/adr/control/status`의 `state`를 사용한다.
+
+| HUD | 상태 값 | 색상 | 의미 |
+| --- | --- | --- | --- |
+| `POLICY <값> Hz` | `running` | 흰색 | 정책이 유효한 액션을 발행 중이다. Hz는 최근 보고 구간에서 완료한 스텝의 실측 빈도다. |
+| `WAITING FOR OVERRIDE` | `waiting_for_override` | 주황 | 정책 RC 인계 세션을 기다린다. |
+| `WAITING FOR INPUTS` | `waiting_for_inputs` | 주황 | 새 인계 세션으로 전환한 뒤 필요한 입력을 확인 중이다. |
+| `WAITING FOR MASK` | `waiting_for_mask` | 주황 | 사용할 마스크를 아직 받지 못했다. |
+| `WAITING FOR IMU` | `waiting_for_imu` | 주황 | 사용할 실측 IMU를 아직 받지 못했다. |
+| `MASK STALE` | `stale_mask`, `stopped_stale_mask` | 빨강 | 마스크 유효기간을 넘겨 액션을 발행하지 않았다. |
+| `IMU STALE` | `stale_imu`, `stopped_stale_imu` | 빨강 | IMU 유효기간을 넘겨 액션을 발행하지 않았다. |
+| `STALE FC STATUS`, `STOPPED STALE FC STATUS` | `stale_fc_status`, `stopped_stale_fc_status` | 빨강 | 인계 중 FC 상태 갱신이 끊겼다. |
+| `POLICY NO STATUS` | 최근 정책 상태 없음 | 회색 | 이전에 받던 정책 상태가 모니터의 만료 시간 안에 갱신되지 않았다. |
+
+`stale_*` 상태에서는 새 입력을 기다린다. 실측 IMU로 이미 실행 중이던 정책이 입력 만료로 멈추면 `stopped_*` 상태가 유지되며, 새 입력이 들어와도 추론을 재개하려면 정책 노드를 재시작해야 한다. HUD는 마스크·IMU의 두 상태를 같은 문구로 줄여 표시하므로, 구분하려면 `/adr/control/status`의 원본 상태를 확인한다.
+
+**셋째·넷째 줄 · 입력 나이**는 `MASK <값> ms`와 `IMU <값> ms`로 항상 흰색이다. 정책이 마지막으로 보고한 입력 나이이며, 값이 없으면 `-- ms`로 표시한다. 입력을 계속 받으면 나이는 다시 낮아질 수 있고, 이미 멈춘 정책의 정지 문구는 계속 표시된다.
+
 ## 5. 관측과 제어
 
 ### 5.1 카메라와 GateNet
